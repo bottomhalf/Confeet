@@ -1,6 +1,6 @@
 package model
 
-type Reponse struct {
+type Response struct {
 	Message string `json:"message"`
 	From    string `json:"from"`
 }

@@ -1,18 +1,17 @@
 package main
 
 import (
-	"Confeet/internal/manager"
-	"fmt"
+	approuters "Confeet/internal/app_routers"
+	"Confeet/internal/configuration"
 	"log"
-	"net/http"
 )
 
 func main() {
-	mgr := manager.NewManager()
+	container, err := configuration.BuildContainer()
+	if err != nil {
+		log.Fatalf("Failed to build container: %v", err)
+	}
 
-	http.Handle("/", http.FileServer(http.Dir("/frontend")))
-	http.HandleFunc("/ws", mgr.ServeWS)
-
-	fmt.Println("Server running at http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	// Setup routers
+	approuters.StartServer(container)
 }

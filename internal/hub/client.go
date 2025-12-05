@@ -1,0 +1,212 @@
+package hub
+
+import (
+	"Confeet/internal/event"
+	"context"
+	"log"
+	"net"
+	"sync"
+	"time"
+
+	"github.com/gorilla/websocket"
+)
+
+type ClientList map[*Client]bool
+
+type Client struct {
+	ID        string
+	ChannelId string
+	conn      *websocket.Conn
+	manager   *Hub
+	egress    chan event.WsEvent
+
+	// cancel or stop goroutine
+	cancel context.CancelFunc
+	ctx    context.Context
+	once   sync.Once
+}
+
+type ManagerIface interface {
+	RouteEvent(event.WsEvent, *Client) error
+	RemoveClient(*Client)
+}
+
+var (
+	// tuning parameters
+	writeWait          = 10 * time.Second       // time allowed to write a message to the peer
+	pongWait           = 20 * time.Second       // time allowed to read the next pong message from the peer
+	pingInterval       = (pongWait * 9) / 10    // send pings to peer with this period
+	maxMessageSize     = 64 * 1024              // max inbound message size (64KB)
+	sendBufSize        = 256                    // per-connection outbound buffer size
+	workerPoolSize     = 16                     // number of workers to process inbound messages
+	sendTimeout        = 100 * time.Millisecond // timeout for enqueuing outbound messages
+	kickOnFull         = true                   // when true, disconnect client when egress is full
+	registerTimeout    = 5 * time.Second        // timeout for client registration
+	unregisterTimeout  = 5 * time.Second        // timeout for client unregistration
+	inboundSendTimeout = 500 * time.Millisecond // timeout for sending to inbound channel
+)
+
+func RegisterClient(id string, channelId string, conn *websocket.Conn, h *Hub) {
+	ctx, cancel := context.WithCancel(context.Background())
+	client := &Client{
+		ID:        id,
+		ChannelId: channelId,
+		conn:      conn,
+		manager:   h,
+		egress:    make(chan event.WsEvent, sendBufSize),
+		cancel:    cancel,
+		ctx:       ctx,
+		once:      sync.Once{},
+	}
+
+	select {
+	case h.register <- client:
+		// registered
+		go client.ReadMessages()
+		go client.WriteMessage()
+	case <-time.After(registerTimeout):
+		log.Printf("failed to register client %s: timeout", id)
+		cancel()
+		conn.Close()
+	}
+}
+
+func (c *Client) ReadMessages() {
+	defer func() {
+		select {
+		case c.manager.unregister <- c:
+			// unregistered successfully
+		case <-time.After(unregisterTimeout):
+			log.Printf("failed to unregister client %s: timeout", c.ID)
+		}
+		c.Close()
+	}()
+
+	c.conn.SetReadLimit(int64(maxMessageSize))
+	c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	c.conn.SetPongHandler(c.pongHandler)
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		default:
+			var ev event.WsEvent
+
+			if err := c.conn.ReadJSON(&ev); err != nil {
+
+				if websocket.IsCloseError(err,
+					websocket.CloseNormalClosure,
+					websocket.CloseGoingAway,
+					websocket.CloseAbnormalClosure,
+				) {
+					log.Printf("client disconnected: %v", c.ID)
+					return
+				}
+
+				// 🔹 Unexpected abnormal close
+				if websocket.IsUnexpectedCloseError(err,
+					websocket.CloseInternalServerErr,
+					websocket.CloseProtocolError,
+				) {
+					log.Printf("unexpected close for %s: %v", c.ID, err)
+				}
+
+				if ne, ok := err.(net.Error); ok && ne.Timeout() {
+					log.Printf("client %s timed out - closing connection", c.ID)
+					return // <-- triggers remove + cleanup
+				}
+
+				// For other errors, log and exit (cleanup will happen in defer)
+				log.Printf("error reading from client %s: %v", c.ID, err)
+				return
+			}
+
+			// Non-blocking send into inbound processing queue to avoid blocking reader
+			select {
+			case c.manager.inbound <- inboundMessage{client: c, event: ev}:
+				// accepted for processing
+			case <-time.After(inboundSendTimeout):
+				log.Printf("inbound send timeout: dropping client %s", c.ID)
+				c.cancel()
+				c.conn.Close()
+			case <-c.ctx.Done():
+				return
+			}
+		}
+	}
+}
+
+func (c *Client) WriteMessage() {
+	ticker := time.NewTicker(pingInterval)
+
+	defer func() {
+		log.Println("WriteMessage goroutine exiting for client:", c.ID)
+		ticker.Stop()
+		c.Close()
+	}()
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case ev, ok := <-c.egress:
+			if !ok {
+				if err := c.conn.WriteMessage(websocket.CloseMessage, nil); err != nil {
+					log.Printf("connection closed: %v", err)
+				}
+				return
+			}
+
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.conn.WriteJSON(ev); err != nil {
+				log.Println("marshal error: ", err)
+				return
+			}
+
+			log.Println("message sent")
+		case <-ticker.C:
+			log.Println("Ping sent to client:", c.ID)
+			if err := c.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeWait)); err != nil {
+				log.Println("write message error: ", err)
+				return
+			}
+		}
+	}
+}
+
+func (c *Client) pongHandler(pongMsg string) error {
+	log.Println("Pong received from client:", c.ID)
+	return c.conn.SetReadDeadline(time.Now().Add(pongWait))
+}
+
+func (c *Client) Send(ev event.WsEvent) {
+	select {
+	case c.egress <- ev:
+		// message sent
+	case <-time.After(sendTimeout):
+		log.Printf("egress full, disconnecting client %s\n", c.ID)
+		select {
+		case c.manager.unregister <- c:
+			// unregistered
+		case <-time.After(unregisterTimeout):
+			log.Printf("failed to unregister client %s: timeout", c.ID)
+		}
+	case <-c.ctx.Done():
+		// client already closed
+	}
+}
+
+func (c *Client) Close() {
+	c.once.Do(func() {
+		c.cancel()
+
+		select {
+		case <-c.ctx.Done():
+		default:
+			close(c.egress)
+		}
+
+		_ = c.conn.Close()
+	})
+}

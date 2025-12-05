@@ -1,0 +1,14 @@
+
+{
+  "mysql": {
+    "dsn": "adminuser:password@tcp(145.223.22.73:30001)/confeet"
+  },
+  "mongo": {
+    "uri": "mongodb://145.223.22.73:30001",
+    "database": "confeet"
+  },
+  "server": {
+    "app_port": 8080,
+    "socket_port": 8081
+  }
+}

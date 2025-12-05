@@ -227,7 +227,7 @@
     window.onload = function() {
         if(window["WebSocket"]) {
             console.log("Supported web socket");
-            conn = new WebSocket("wss://" + document.location.host + "/ws");
+            conn = new WebSocket("ws://" + document.location.host + "/ws");
 
             conn.onmessage = function(recievedEvent) {
                 const eventData = JSON.parse(recievedEvent.data)
