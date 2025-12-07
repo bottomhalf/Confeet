@@ -3,13 +3,16 @@ package repo
 import (
 	"Confeet/internal/db"
 	"Confeet/internal/event"
+	"Confeet/internal/model"
 	"context"
 	"errors"
 	"fmt"
 	"sync"
 	"time"
 
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.uber.org/zap"
 )
 
@@ -48,6 +51,7 @@ type messageRepository struct {
 
 type MessageRepository interface {
 	InsertMessage(ctx context.Context, msg *event.WsEvent) (string, error)
+	GetMeetingRooms(ctx context.Context) ([]model.Conversation, error)
 }
 
 func NewMessageRepository(mongo *mongo.Database, repo *db.Repository[event.WsEvent], logger *zap.Logger) MessageRepository {
@@ -57,6 +61,35 @@ func NewMessageRepository(mongo *mongo.Database, repo *db.Repository[event.WsEve
 		logger:      logger,
 		inFlightOps: make(map[string]struct{}),
 	}
+}
+
+// -----------------------------------------------------------------------------
+// GetMeetingRooms - Returns all conversations from the conversations collection
+// -----------------------------------------------------------------------------
+func (m *messageRepository) GetMeetingRooms(ctx context.Context) ([]model.Conversation, error) {
+	ctx, cancel := m.ensureTimeout(ctx, defaultReadTimeout)
+	defer cancel()
+
+	// Get the conversations collection
+	collection := m.con.Collection("conversations")
+
+	// Find all active conversations, sorted by last_message_at descending
+	opts := options.Find().SetSort(bson.M{"last_message_at": -1})
+	cursor, err := collection.Find(ctx, bson.M{"is_active": true}, opts)
+	if err != nil {
+		m.logger.Error("failed to query conversations", zap.Error(err))
+		return nil, fmt.Errorf("failed to get conversations: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var conversations []model.Conversation
+	if err := cursor.All(ctx, &conversations); err != nil {
+		m.logger.Error("failed to decode conversations", zap.Error(err))
+		return nil, fmt.Errorf("failed to decode conversations: %w", err)
+	}
+
+	m.logger.Debug("conversations retrieved", zap.Int("count", len(conversations)))
+	return conversations, nil
 }
 
 // -----------------------------------------------------------------------------

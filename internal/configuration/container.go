@@ -8,6 +8,8 @@ import (
 	"Confeet/internal/service"
 	"fmt"
 	"log"
+
+	"go.uber.org/zap"
 )
 
 type Container struct {
@@ -31,7 +33,10 @@ func BuildContainer() (*Container, error) {
 
 	mongoRepo := db.NewRepository[event.WsEvent](con, config.ChatDatabase.Database)
 
-	messageRepo := repo.NewMessageRepository(con, mongoRepo, nil)
+	logger, _ := zap.NewProduction()
+	defer logger.Sync()
+
+	messageRepo := repo.NewMessageRepository(con, mongoRepo, logger)
 	userRepo := repo.NewUserRepository(con, mongoRepo)
 	userService := service.NewUserService(userRepo, messageRepo)
 	userHandler := handler.NewUserHandler(userService)

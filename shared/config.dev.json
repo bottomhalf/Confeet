@@ -4,7 +4,7 @@
     "dsn": "adminuser:password@tcp(145.223.22.73:30001)/confeet"
   },
   "mongo": {
-    "uri": "mongodb://145.223.22.73:30001",
+    "uri": "mongodb://adminuser:password@145.223.22.73:30001",
     "database": "confeet"
   },
   "server": {

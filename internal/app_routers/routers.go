@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -100,6 +101,16 @@ func StartServer(container *configuration.Container) {
 func createAppServer(container *configuration.Container) *http.Server {
 	router := gin.Default()
 
+	// Configure CORS
+	router.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:4200", "https://www.confeet.com"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}))
+
 	router.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"message": "Welcome to Confeet Application Server!",
@@ -107,6 +118,7 @@ func createAppServer(container *configuration.Container) *http.Server {
 	})
 
 	UserRouters(router, container)
+	MeetingRouters(router, container)
 
 	return &http.Server{
 		Addr:         fmt.Sprintf(":%d", container.Config.Server.AppPort),

@@ -25,7 +25,11 @@ func (h *userHandler) CreateUser(c *gin.Context) {
 }
 
 func (h *userHandler) GetMeetingRooms(c *gin.Context) {
-	panic("unimplemented")
+	cvs := h.service.GetMeetingRooms(c.Request.Context())
+
+	c.JSON(http.StatusOK, gin.H{
+		"conversations": cvs,
+	})
 }
 
 func NewUserHandler(service service.UserService) UserHandler {
