@@ -5,7 +5,10 @@
   },
   "mongo": {
     "uri": "mongodb://adminuser:password@145.223.22.73:30001",
-    "database": "confeet"
+    "database": "confeet",
+    "messagesCollection": "messages",
+    "sessionsCollection": "sessions",
+    "productsCollection": "products"
   },
   "server": {
     "app_port": 8080,

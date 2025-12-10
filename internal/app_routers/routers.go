@@ -2,7 +2,6 @@ package approuters
 
 import (
 	"Confeet/internal/configuration"
-	"Confeet/internal/hub"
 	"context"
 	"fmt"
 	"log"
@@ -17,7 +16,7 @@ import (
 )
 
 func StartServer(container *configuration.Container) {
-	h := hub.NewHub()
+	h := container.Hub
 
 	// WebSocket handler
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
@@ -26,13 +25,13 @@ func StartServer(container *configuration.Container) {
 			http.Error(w, "userId is required", http.StatusBadRequest)
 			return
 		}
-		channelId := r.URL.Query().Get("channelId")
-		if channelId == "" {
-			http.Error(w, "channelId is required", http.StatusBadRequest)
+		conversationID := r.URL.Query().Get("conversationId")
+		if conversationID == "" {
+			http.Error(w, "conversationId is required", http.StatusBadRequest)
 			return
 		}
 
-		h.ServeWS(w, r, userId, channelId)
+		h.ServeWS(w, r, userId, conversationID)
 	})
 
 	// Create servers with explicit configuration

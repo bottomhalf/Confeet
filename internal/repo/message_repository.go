@@ -2,7 +2,6 @@ package repo
 
 import (
 	"Confeet/internal/db"
-	"Confeet/internal/event"
 	"Confeet/internal/model"
 	"context"
 	"errors"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.uber.org/zap"
@@ -41,7 +41,7 @@ const (
 
 type messageRepository struct {
 	con       *mongo.Database
-	mongoRepo *db.Repository[event.WsEvent]
+	mongoRepo *db.Repository[model.Message]
 	logger    *zap.Logger
 
 	// for idempotency - track in-flight operations
@@ -50,11 +50,11 @@ type messageRepository struct {
 }
 
 type MessageRepository interface {
-	InsertMessage(ctx context.Context, msg *event.WsEvent) (string, error)
+	InsertMessage(ctx context.Context, msg *model.Message) (string, error)
 	GetMeetingRooms(ctx context.Context) ([]model.Conversation, error)
 }
 
-func NewMessageRepository(mongo *mongo.Database, repo *db.Repository[event.WsEvent], logger *zap.Logger) MessageRepository {
+func NewMessageRepository(mongo *mongo.Database, repo *db.Repository[model.Message], logger *zap.Logger) MessageRepository {
 	return &messageRepository{
 		con:         mongo,
 		mongoRepo:   repo,
@@ -96,7 +96,7 @@ func (m *messageRepository) GetMeetingRooms(ctx context.Context) ([]model.Conver
 // InsertMessage
 // -----------------------------------------------------------------------------
 
-func (m *messageRepository) InsertMessage(ctx context.Context, msg *event.WsEvent) (string, error) {
+func (m *messageRepository) InsertMessage(ctx context.Context, msg *model.Message) (string, error) {
 	err := m.validateMessage(msg)
 	if err != nil {
 		return "", err
@@ -114,13 +114,23 @@ func (m *messageRepository) InsertMessage(ctx context.Context, msg *event.WsEven
 		}
 
 		result, err := m.mongoRepo.Create(ctx, *msg)
-		if err != nil {
+		if err == nil {
+			// Success - get inserted ID safely
+			insertedID := ""
+			if result.InsertedID != nil {
+				if oid, ok := result.InsertedID.(primitive.ObjectID); ok {
+					insertedID = oid.Hex()
+				} else if str, ok := result.InsertedID.(string); ok {
+					insertedID = str
+				}
+			}
+
 			m.logger.Info("message inserted successfully",
-				zap.String("inserted_id", result.InsertedID.(string)),
-				zap.String("channel_id", msg.ChannelId),
+				zap.String("inserted_id", insertedID),
+				zap.String("conversation_id", msg.ConversationID.String()),
 				zap.Int("attempt", attempt+1),
 			)
-			return result.InsertedID.(string), nil
+			return insertedID, nil
 		}
 
 		lastErr = err
@@ -139,7 +149,7 @@ func (m *messageRepository) InsertMessage(ctx context.Context, msg *event.WsEven
 
 	m.logger.Error("failed to insert message after all retries",
 		zap.Error(lastErr),
-		zap.String("channel_id", msg.ChannelId),
+		zap.String("conversation_id", msg.ConversationID.String()),
 	)
 
 	return "", fmt.Errorf("insert message failed: %w", lastErr)
@@ -149,7 +159,7 @@ func (m *messageRepository) InsertMessage(ctx context.Context, msg *event.WsEven
 // InsertMessageIdempotent - Prevents duplicate inserts
 // -----------------------------------------------------------------------------
 
-func (m *messageRepository) InsertMessageIdempotent(ctx context.Context, msg *event.WsEvent) (string, error) {
+func (m *messageRepository) InsertMessageIdempotent(ctx context.Context, msg *model.Message) (string, error) {
 	if err := m.validateMessage(msg); err != nil {
 		return "", err
 	}
@@ -166,7 +176,7 @@ func (m *messageRepository) InsertMessageIdempotent(ctx context.Context, msg *ev
 	defer cancel()
 
 	// Check if already exists in DB
-	filter := db.NewFilter().Eq("channelId", msg.ChannelId).Eq("messageId", msg.MessageId).Build()
+	filter := db.NewFilter().Eq("ConversationId", msg.ConversationID).Eq("MessageId", msg.ID).Build()
 
 	exists, err := m.mongoRepo.Exists(ctx, filter)
 	if err != nil {
@@ -178,8 +188,8 @@ func (m *messageRepository) InsertMessageIdempotent(ctx context.Context, msg *ev
 		if err != nil {
 			return "", err
 		}
-		m.logger.Debug("message already exists", zap.String("id", existing.MessageId))
-		return existing.ChannelId, nil
+		m.logger.Debug("message already exists", zap.String("id", existing.ID.String()))
+		return existing.ConversationID.String(), nil
 	}
 
 	return m.InsertMessage(ctx, msg)
@@ -188,8 +198,8 @@ func (m *messageRepository) InsertMessageIdempotent(ctx context.Context, msg *ev
 // -----------------------------------------------------------------------------
 // FilterMessage
 // -----------------------------------------------------------------------------
-func (m *messageRepository) FilterMessage(ctx context.Context, channelId string, page int64) (*db.PaginatedResult[event.WsEvent], error) {
-	if err := m.validateChannelId(channelId); err != nil {
+func (m *messageRepository) FilterMessage(ctx context.Context, conversation_id string, page int64) (*db.PaginatedResult[model.Message], error) {
+	if err := m.validateChannelId(conversation_id); err != nil {
 		return nil, err
 	}
 
@@ -197,17 +207,17 @@ func (m *messageRepository) FilterMessage(ctx context.Context, channelId string,
 	ctx, cancel := m.ensureTimeout(ctx, defaultReadTimeout)
 	defer cancel()
 
-	filter := db.NewFilter().Eq("channelId", channelId).Eq("status", 1).Build()
+	filter := db.NewFilter().Eq("conversation_id", conversation_id).Eq("status", 1).Build()
 	result, err := m.mongoRepo.FindWithPagination(ctx, filter, db.PaginationParams{
 		Page: page,
 	})
 
 	if err != nil {
-		return nil, m.handleReadError(err, channelId)
+		return nil, m.handleReadError(err, conversation_id)
 	}
 
 	m.logger.Debug("messages filtered successfully",
-		zap.String("channel_id", channelId),
+		zap.String("conversation_id", conversation_id),
 		zap.Int("count", len(result.Data)),
 		zap.Int64("total", result.Total),
 		zap.Int64("page", result.Page),
@@ -238,18 +248,18 @@ func (m *messageRepository) releaseInFlight(key string) {
 	delete(m.inFlightOps, key)
 }
 
-func (m *messageRepository) generateIdempotencyKey(msg *event.WsEvent) string {
-	if msg.MessageId != "" {
-		return fmt.Sprintf("%s:%s", msg.ChannelId, msg.MessageId)
+func (m *messageRepository) generateIdempotencyKey(msg *model.Message) string {
+	if msg.ID.IsZero() {
+		return fmt.Sprintf("%s:%s", msg.ConversationID, msg.ID)
 	}
-	return fmt.Sprintf("%s:%d", msg.ChannelId, msg.MessageId)
+	return fmt.Sprintf("%s:%s", msg.ConversationID, msg.ID)
 }
 
-func (m *messageRepository) validateMessage(msg *event.WsEvent) error {
+func (m *messageRepository) validateMessage(msg *model.Message) error {
 	if msg == nil {
 		return ErrInvalidMessage
 	}
-	if msg.ChannelId == "" {
+	if msg.ConversationID.IsZero() {
 		return ErrInvalidChannelID
 	}
 	return nil

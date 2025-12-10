@@ -2,7 +2,7 @@ package repo
 
 import (
 	"Confeet/internal/db"
-	"Confeet/internal/event"
+	"Confeet/internal/model"
 	"context"
 	"fmt"
 	"time"
@@ -12,23 +12,23 @@ import (
 
 type UserRepository interface {
 	// Define methods for user repository here
-	insertMessage(msg event.WsEvent) error
+	insertMessage(msg model.Message) error
 }
 
 type userRepository struct {
 	// Add fields for dependencies here
 	con       *mongo.Database
-	mongoRepo *db.Repository[event.WsEvent]
+	mongoRepo *db.Repository[model.Message]
 }
 
-func NewUserRepository(con *mongo.Database, repo *db.Repository[event.WsEvent]) UserRepository {
+func NewUserRepository(con *mongo.Database, repo *db.Repository[model.Message]) UserRepository {
 	return &userRepository{
 		con:       con,
 		mongoRepo: repo,
 	}
 }
 
-func (r *userRepository) insertMessage(msg event.WsEvent) error {
+func (r *userRepository) insertMessage(msg model.Message) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
 

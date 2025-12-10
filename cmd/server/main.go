@@ -12,6 +12,9 @@ func main() {
 		log.Fatalf("Failed to build container: %v", err)
 	}
 
+	// Ensure cleanup on shutdown
+	defer container.Close()
+
 	// Setup routers
 	approuters.StartServer(container)
 }

@@ -6,41 +6,40 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
+var (
+	MessageRecievedId = 1
+	MessageSentId     = 2
+	MessageSeenId     = 3
+	MessageEditedId   = 4
+	MessageDeletedId  = 5
+)
+
+// Message represents a chat message in MongoDB
 type Message struct {
-	ChannelId string `json:"channelId"`
-	SenderId  string `json:"senderId"`
-	Type      string `json:"type"`
-	Content   string `json:"content"`
+	ID             primitive.ObjectID  `json:"id" bson:"_id,omitempty"`
+	MessageId      string              `json:"messageId" bson:"message_id"`
+	ConversationID primitive.ObjectID  `json:"conversationId" bson:"conversation_id"`
+	SenderID       int64               `json:"senderId" bson:"sender_id"`
+	Type           string              `json:"type" bson:"type"`
+	Body           string              `json:"body" bson:"body"`
+	FileURL        *string             `json:"fileUrl" bson:"file_url"`
+	ReplyTo        *primitive.ObjectID `json:"replyTo" bson:"reply_to"`
+	Mentions       []int64             `json:"mentions" bson:"mentions"`
+	Reactions      []Reaction          `json:"reactions" bson:"reactions"`
+	ClientType     string              `json:"clientType" bson:"client_type"`
+	CreatedAt      time.Time           `json:"createdAt" bson:"created_at"`
+	EditedAt       *time.Time          `json:"editedAt" bson:"edited_at"`
+	Status         int                 `json:"status" bson:"status"`
 }
 
-// Conversation represents a chat conversation/room in MongoDB
-type Conversation struct {
-	ID               primitive.ObjectID   `json:"id" bson:"_id,omitempty"`
-	ConversationType string               `json:"conversationType" bson:"conversation_type"`
-	Participants     []Participant        `json:"participants" bson:"participants"`
-	ConversationName string               `json:"conversationName" bson:"conversation_name"`
-	CreatedAt        time.Time            `json:"createdAt" bson:"created_at"`
-	LastMessageAt    time.Time            `json:"lastMessageAt" bson:"last_message_at"`
-	LastMessage      *LastMessage         `json:"lastMessage" bson:"last_message"`
-	IsActive         bool                 `json:"isActive" bson:"is_active"`
-	Settings         ConversationSettings `json:"settings" bson:"settings"`
+// Reaction represents a reaction on a message
+type Reaction struct {
+	UserID int64  `json:"userId" bson:"user_id"`
+	Emoji  string `json:"emoji" bson:"emoji"`
 }
 
-type Participant struct {
-	UserID   primitive.ObjectID `json:"userId" bson:"user_id"`
-	Username string             `json:"username" bson:"username"`
-	JoinedAt time.Time          `json:"joinedAt" bson:"joined_at"`
-	Role     string             `json:"role" bson:"role"`
-}
-
-type LastMessage struct {
-	Content        string    `json:"content" bson:"content"`
-	SenderUsername string    `json:"senderUsername" bson:"sender_username"`
-	Timestamp      time.Time `json:"timestamp" bson:"timestamp"`
-}
-
-type ConversationSettings struct {
-	AllowReactions bool `json:"allowReactions" bson:"allow_reactions"`
-	AllowPinning   bool `json:"allowPinning" bson:"allow_pinning"`
-	AdminOnlyPost  bool `json:"adminOnlyPost" bson:"admin_only_post"`
+// ErrorPayload represents an error response sent to client via WebSocket
+type ErrorPayload struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }

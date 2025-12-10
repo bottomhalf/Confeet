@@ -14,21 +14,18 @@ import (
 type ClientList map[*Client]bool
 
 type Client struct {
-	ID        string
-	ChannelId string
-	conn      *websocket.Conn
-	manager   *Hub
-	egress    chan event.WsEvent
+	ID             string
+	ConversationID string
+	conn           *websocket.Conn
+	manager        *Hub
+	egress         chan event.WsEvent
 
 	// cancel or stop goroutine
-	cancel context.CancelFunc
-	ctx    context.Context
-	once   sync.Once
-}
-
-type ManagerIface interface {
-	RouteEvent(event.WsEvent, *Client) error
-	RemoveClient(*Client)
+	cancel         context.CancelFunc
+	ctx            context.Context
+	once           sync.Once
+	connClosed     chan struct{}
+	connClosedOnce sync.Once
 }
 
 var (
@@ -46,17 +43,19 @@ var (
 	inboundSendTimeout = 500 * time.Millisecond // timeout for sending to inbound channel
 )
 
-func RegisterClient(id string, channelId string, conn *websocket.Conn, h *Hub) {
+func RegisterClient(id string, conversationID string, conn *websocket.Conn, h *Hub) {
 	ctx, cancel := context.WithCancel(context.Background())
 	client := &Client{
-		ID:        id,
-		ChannelId: channelId,
-		conn:      conn,
-		manager:   h,
-		egress:    make(chan event.WsEvent, sendBufSize),
-		cancel:    cancel,
-		ctx:       ctx,
-		once:      sync.Once{},
+		ID:             id,
+		ConversationID: conversationID,
+		conn:           conn,
+		manager:        h,
+		egress:         make(chan event.WsEvent, sendBufSize),
+		cancel:         cancel,
+		ctx:            ctx,
+		once:           sync.Once{},
+		connClosed:     make(chan struct{}),
+		connClosedOnce: sync.Once{},
 	}
 
 	select {
@@ -131,6 +130,7 @@ func (c *Client) ReadMessages() {
 				c.cancel()
 				c.conn.Close()
 			case <-c.ctx.Done():
+				log.Printf("Closing read message: for client: %s", c.ID)
 				return
 			}
 		}
@@ -141,14 +141,22 @@ func (c *Client) WriteMessage() {
 	ticker := time.NewTicker(pingInterval)
 
 	defer func() {
-		log.Println("WriteMessage goroutine exiting for client:", c.ID)
 		ticker.Stop()
 		c.Close()
+		_ = c.conn.Close()
+
+		// Safe close of connClosed channel using sync.Once
+		c.connClosedOnce.Do(func() {
+			close(c.connClosed)
+		})
+
+		log.Println("WriteMessage goroutine exiting for client:", c.ID)
 	}()
 
 	for {
 		select {
 		case <-c.ctx.Done():
+			log.Printf("Closing write message: for client: %s", c.ID)
 			return
 		case ev, ok := <-c.egress:
 			if !ok {
@@ -200,13 +208,17 @@ func (c *Client) Send(ev event.WsEvent) {
 func (c *Client) Close() {
 	c.once.Do(func() {
 		c.cancel()
+		close(c.egress)
 
-		select {
-		case <-c.ctx.Done():
-		default:
-			close(c.egress)
-		}
-
-		_ = c.conn.Close()
+		// Wait for WriteMessage to close conn, or force close after timeout
+		go func() {
+			select {
+			case <-c.connClosed:
+				// WriteMessage closed it properly
+			case <-time.After(5 * time.Second):
+				_ = c.conn.Close()
+				log.Printf("safety timeout: force closed connection for client %s", c.ID)
+			}
+		}()
 	})
 }

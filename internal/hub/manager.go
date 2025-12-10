@@ -2,6 +2,8 @@ package hub
 
 import (
 	"Confeet/internal/event"
+	"Confeet/internal/model"
+	"Confeet/internal/repo"
 	"context"
 	"crypto/sha1"
 	"encoding/binary"
@@ -29,26 +31,28 @@ type clientBucket struct {
 }
 
 type Hub struct {
-	shards     [shardCount]*clientBucket
-	register   chan *Client
-	unregister chan *Client
-	broadcast  chan event.WsEvent
-	inbound    chan inboundMessage
-	mu         sync.RWMutex
-	wg         sync.WaitGroup
-	ctx        context.Context
-	cancel     context.CancelFunc
+	shards      [shardCount]*clientBucket
+	register    chan *Client
+	unregister  chan *Client
+	broadcast   chan event.WsEvent
+	inbound     chan inboundMessage
+	mu          sync.RWMutex
+	wg          sync.WaitGroup
+	ctx         context.Context
+	cancel      context.CancelFunc
+	messageRepo repo.MessageRepository
 }
 
-func NewHub() *Hub {
+func NewHub(messageRepo repo.MessageRepository) *Hub {
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &Hub{
-		register:   make(chan *Client, 1024),
-		unregister: make(chan *Client, 1024),
-		broadcast:  make(chan event.WsEvent, 1024), // buffer size for broadcast
-		inbound:    make(chan inboundMessage, 4096), // buffer for burst handling
-		ctx:        ctx,
-		cancel:     cancel,
+		register:    make(chan *Client, 1024),
+		unregister:  make(chan *Client, 1024),
+		broadcast:   make(chan event.WsEvent, 1024),  // buffer size for broadcast
+		inbound:     make(chan inboundMessage, 4096), // buffer for burst handling
+		messageRepo: messageRepo,
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 
 	for i := 0; i < shardCount; i++ {
@@ -85,17 +89,69 @@ func NewHub() *Hub {
 
 func (h *Hub) handleEvent(ev event.WsEvent, c *Client) {
 	switch ev.Event {
-	case event.EventClientMessage:
-		var message event.Message
-		if err := json.Unmarshal(ev.Message, &message); err != nil {
+	case event.EventSendMessage:
+		var message model.Message
+		if err := json.Unmarshal(ev.Payload, &message); err != nil {
 			log.Printf("failed to unmarshal client message: %v", err)
+			h.sendErrorToClient(c, "invalid_message", "Failed to parse message")
 			return
 		}
 
-		log.Printf("New message from %s: %s\n", message.SenderId, message.Body)
-		h.publishToRoom(ev, c.ChannelId)
+		log.Printf("New message from %d: %s\n", message.SenderID, message.Body)
+		message.Status = model.MessageSentId
+
+		// Save message to MongoDB before publishing
+		ctx, cancel := context.WithTimeout(h.ctx, 5*time.Second)
+		insertedID, err := h.messageRepo.InsertMessage(ctx, &message)
+		cancel()
+
+		if err != nil {
+			log.Printf("failed to save message to MongoDB: %v", err)
+			h.sendErrorToClient(c, "save_failed", "Failed to save message, please retry")
+			return
+		}
+
+		log.Printf("Message saved to MongoDB with ID: %s", insertedID)
+
+		ev.Payload, _ = json.Marshal(message)
+		h.publishToRoom(ev, c.ConversationID)
+	case event.EventTyping:
+		var typing model.TypingIndicator
+		if err := json.Unmarshal(ev.Payload, &typing); err != nil {
+			log.Printf("failed to unmarshal typing indicator: %v", err)
+			return
+		}
+
+		log.Printf("User %s is typing in conversation %s\n", typing.UserID, typing.ConversationID)
+		h.publishToRoom(ev, c.ConversationID)
 	default:
 		log.Printf("unknown event type: %s", ev.Event)
+	}
+}
+
+// sendErrorToClient sends an error event back to the specific client
+func (h *Hub) sendErrorToClient(c *Client, code string, message string) {
+	errorPayload := model.ErrorPayload{
+		Code:    code,
+		Message: message,
+	}
+
+	payload, err := json.Marshal(errorPayload)
+	if err != nil {
+		log.Printf("failed to marshal error payload: %v", err)
+		return
+	}
+
+	errorEvent := event.WsEvent{
+		Event:   event.EventError,
+		Payload: payload,
+	}
+
+	select {
+	case c.egress <- errorEvent:
+		// sent
+	case <-time.After(sendTimeout):
+		log.Printf("failed to send error to client %s: timeout", c.ID)
 	}
 }
 
@@ -117,7 +173,7 @@ func (h *Hub) publishToRoom(ev event.WsEvent, channelId string) {
 	}
 	b.RUnlock()
 
-	ev.Event = event.EventServerMessage
+	ev.Event = event.EventMessageSent
 
 	// deliver to clients without holding lock
 	for _, c := range clients {
@@ -138,29 +194,29 @@ func (h *Hub) publishToRoom(ev event.WsEvent, channelId string) {
 	}
 }
 
-func getShard(channelId string) uint32 {
-	if channelId == "" {
+func getShard(conversationID string) uint32 {
+	if conversationID == "" {
 		return 0
 	}
 
-	h := sha1.Sum([]byte(channelId))
+	h := sha1.Sum([]byte(conversationID))
 	return binary.BigEndian.Uint32(h[:4]) % shardCount
 }
 
 func (h *Hub) addClient(c *Client) {
-	sh := getShard(c.ChannelId)
+	sh := getShard(c.ConversationID)
 	b := h.shards[sh]
 	b.Lock()
 	defer b.Unlock()
 
-	room, ok := b.rooms[c.ChannelId]
+	room, ok := b.rooms[c.ConversationID]
 	if !ok {
 		room = make(map[string]*Client)
-		b.rooms[c.ChannelId] = room
+		b.rooms[c.ConversationID] = room
 	}
 
 	room[c.ID] = c
-	log.Printf("client %s registered in channel %s (shard %d)", c.ID, c.ChannelId, sh)
+	log.Printf("client %s registered in channel %s (shard %d)", c.ID, c.ConversationID, sh)
 }
 
 func (h *Hub) Stop() {
@@ -182,22 +238,22 @@ func (h *Hub) Stop() {
 }
 
 func (h *Hub) removeClient(c *Client) {
-	sh := getShard(c.ChannelId)
+	sh := getShard(c.ConversationID)
 	b := h.shards[sh]
 	b.Lock()
 	defer b.Unlock()
 
-	if room, ok := b.rooms[c.ChannelId]; ok {
+	if room, ok := b.rooms[c.ConversationID]; ok {
 		if _, exists := room[c.ID]; exists {
 			delete(room, c.ID)
 		}
 
 		if len(room) == 0 {
-			delete(b.rooms, c.ChannelId)
+			delete(b.rooms, c.ConversationID)
 		}
 
 		c.Close()
-		log.Printf("client %s removed from channel %s (shard %d)", c.ID, c.ChannelId, sh)
+		log.Printf("client %s removed from conversation %s (shard %d)", c.ID, c.ConversationID, sh)
 	}
 }
 
@@ -235,12 +291,12 @@ func checkOrigin(r *http.Request) bool {
 	}
 }
 
-func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request, clientId string, channelId string) {
+func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request, clientId string, conversationID string) {
 	conn, err := websocketUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println(err)
 		return
 	}
 
-	RegisterClient(clientId, channelId, conn, h)
+	RegisterClient(clientId, conversationID, conn, h)
 }

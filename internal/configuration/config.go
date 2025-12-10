@@ -6,8 +6,11 @@ import (
 )
 
 type MongoConfig struct {
-	Uri      string `json:"uri"`
-	Database string `json:"database"`
+	Uri                string `json:"uri"`
+	Database           string `json:"database"`
+	MessagesCollection string `json:"messagesCollection"`
+	SessionsCollection string `json:"sessionsCollection"`
+	ProductsCollection string `json:"productsCollection"`
 }
 
 type DatabaseConfig struct {
