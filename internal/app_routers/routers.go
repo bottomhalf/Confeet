@@ -19,7 +19,7 @@ func StartServer(container *configuration.Container) {
 	h := container.Hub
 
 	// WebSocket handler
-	http.HandleFunc("/"+container.Config.ChatDatabase.SocketRoute, func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/cf/meet/"+container.Config.ChatDatabase.SocketRoute, func(w http.ResponseWriter, r *http.Request) {
 		userId := r.URL.Query().Get("userId")
 		if userId == "" {
 			http.Error(w, "userId is required", http.StatusBadRequest)
