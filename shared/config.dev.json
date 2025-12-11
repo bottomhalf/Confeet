@@ -6,13 +6,13 @@
   "mongo": {
     "uri": "mongodb://adminuser:password@145.223.22.73:30001",
     "database": "confeet",
-    "socketRoute": "wss",
+    "socketRoute": "ws",
     "messagesCollection": "messages",
     "sessionsCollection": "sessions",
     "productsCollection": "products"
   },
   "server": {
     "app_port": 8080,
-    "socket_port": 8081
+    "socket_port": 8402
   }
 }
