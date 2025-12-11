@@ -6,6 +6,7 @@
   "mongo": {
     "uri": "mongodb://adminuser:password@145.223.22.73:30001",
     "database": "confeet",
+    "socketRoute": "wss",
     "messagesCollection": "messages",
     "sessionsCollection": "sessions",
     "productsCollection": "products"

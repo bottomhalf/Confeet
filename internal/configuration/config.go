@@ -11,6 +11,7 @@ type MongoConfig struct {
 	MessagesCollection string `json:"messagesCollection"`
 	SessionsCollection string `json:"sessionsCollection"`
 	ProductsCollection string `json:"productsCollection"`
+	SocketRoute        string `json:"socketRoute"`
 }
 
 type DatabaseConfig struct {
