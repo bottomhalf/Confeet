@@ -11,5 +11,6 @@ func MeetingRouters(router *gin.Engine, container *configuration.Container) {
 	meetingRoute := router.Group("/meetings")
 	{
 		meetingRoute.GET("/get-all-meeting-rooms", container.UserHandler.GetMeetingRooms)
+		meetingRoute.GET("/get-room-messages/:conversationId", container.UserHandler.GetRoomMessages)
 	}
 }

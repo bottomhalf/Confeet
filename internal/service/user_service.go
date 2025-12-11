@@ -1,6 +1,7 @@
 package service
 
 import (
+	"Confeet/internal/db"
 	"Confeet/internal/model"
 	"Confeet/internal/repo"
 	"context"
@@ -9,6 +10,7 @@ import (
 type UserService interface {
 	// Define methods for user service here
 	GetMeetingRooms(context.Context) []model.Conversation
+	GetRoomMessagesService(ctx context.Context, conversationId string, page int64) (*db.PaginatedResult[model.Message], error)
 }
 
 type userService struct {
@@ -32,4 +34,14 @@ func (s *userService) GetMeetingRooms(ctx context.Context) []model.Conversation 
 	}
 
 	return msg
+}
+
+func (s *userService) GetRoomMessagesService(ctx context.Context, conversationId string, page int64) (*db.PaginatedResult[model.Message], error) {
+	// Placeholder implementation
+	msg, err := s.messageRepo.FilterMessage(ctx, conversationId, page)
+	if err != nil {
+		return nil, err
+	}
+
+	return msg, nil
 }

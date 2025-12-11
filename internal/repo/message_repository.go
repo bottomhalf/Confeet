@@ -26,7 +26,7 @@ var (
 const (
 	// Timeouts
 	defaultWriteTimeout = 5 * time.Second
-	defaultReadTimeout  = 10 * time.Second
+	defaultReadTimeout  = 30 * time.Second // Increased from 10s to 30s for slow queries
 
 	// Retry configuration
 	maxRetries     = 3
@@ -52,6 +52,7 @@ type messageRepository struct {
 type MessageRepository interface {
 	InsertMessage(ctx context.Context, msg *model.Message) (string, error)
 	GetMeetingRooms(ctx context.Context) ([]model.Conversation, error)
+	FilterMessage(ctx context.Context, conversation_id string, page int64) (*db.PaginatedResult[model.Message], error)
 }
 
 func NewMessageRepository(mongo *mongo.Database, repo *db.Repository[model.Message], logger *zap.Logger) MessageRepository {
@@ -207,24 +208,53 @@ func (m *messageRepository) FilterMessage(ctx context.Context, conversation_id s
 	ctx, cancel := m.ensureTimeout(ctx, defaultReadTimeout)
 	defer cancel()
 
-	filter := db.NewFilter().Eq("conversation_id", conversation_id).Eq("status", 1).Build()
-	result, err := m.mongoRepo.FindWithPagination(ctx, filter, db.PaginationParams{
-		Page: page,
-	})
+	filter := db.NewFilter().ObjectID("conversation_id", conversation_id).Build()
 
-	if err != nil {
-		return nil, m.handleReadError(err, conversation_id)
-	}
-
-	m.logger.Debug("messages filtered successfully",
+	m.logger.Debug("filtering messages",
 		zap.String("conversation_id", conversation_id),
-		zap.Int("count", len(result.Data)),
-		zap.Int64("total", result.Total),
-		zap.Int64("page", result.Page),
-		zap.Int64("total_pages", result.TotalPages),
+		zap.Int64("page", page),
+		zap.Any("filter", filter),
 	)
 
-	return result, nil
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			if err := m.waitForRetry(ctx, attempt); err != nil {
+				return nil, err
+			}
+			m.logger.Warn("retrying filter message",
+				zap.String("conversation_id", conversation_id),
+				zap.Int("attempt", attempt+1),
+			)
+		}
+
+		result, err := m.mongoRepo.FindWithPagination(ctx, filter, db.PaginationParams{
+			Page:     page,
+			PageSize: 15,
+			SortBy:   "created_at",
+			SortDesc: false,
+		})
+
+		if err == nil {
+			m.logger.Debug("messages filtered successfully",
+				zap.String("conversation_id", conversation_id),
+				zap.Int("count", len(result.Data)),
+				zap.Int64("total", result.Total),
+				zap.Int64("page", result.Page),
+				zap.Int64("total_pages", result.TotalPages),
+			)
+			return result, nil
+		}
+
+		lastErr = err
+
+		// Don't retry on context cancellation or non-retryable errors
+		if !m.isRetryableError(err) {
+			break
+		}
+	}
+
+	return nil, m.handleReadError(lastErr, conversation_id)
 }
 
 // -----------------------------------------------------------------------------
