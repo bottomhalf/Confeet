@@ -8,7 +8,7 @@ import (
 
 func UserRouters(router *gin.Engine, container *configuration.Container) {
 	// Placeholder for user-related route setup
-	userRoute := router.Group("/users")
+	userRoute := router.Group("/users/api")
 	{
 		userRoute.GET("/get-all-users", container.UserHandler.GetAllUsers)
 		userRoute.POST("/create-user", container.UserHandler.CreateUser)
