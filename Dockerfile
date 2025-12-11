@@ -28,7 +28,7 @@ WORKDIR /root/
 COPY --from=builder /app/confeet .
 
 # After build stage, before CMD
-COPY ./frontend /frontend
+# COPY ./frontend /frontend
 
 # Expose port (replace with your WebSocket port, e.g., 8080)
 EXPOSE 8080
