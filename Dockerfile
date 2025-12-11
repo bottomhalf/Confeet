@@ -31,6 +31,9 @@ COPY --from=builder /app/confeet .
 COPY --from=builder /app/shared/config.dev.json ./shared/
 COPY --from=builder /app/shared/config.prod.json ./shared/
 
+# Set config path environment variable
+ENV CONFIG_PATH=./shared/config.dev.json
+
 # After build stage, before CMD
 # COPY ./frontend /frontend
 

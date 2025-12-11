@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"go.mongodb.org/mongo-driver/mongo"
@@ -27,7 +28,13 @@ type Container struct {
 }
 
 func BuildContainer() (*Container, error) {
-	config, err := LoadConfig("../../shared/config.dev.json")
+	// Get config path from environment variable, default to local dev path
+	configPath := "../../shared/config.dev.json"
+	if envPath := os.Getenv("CONFIG_PATH"); envPath != "" {
+		configPath = envPath
+	}
+
+	config, err := LoadConfig(configPath)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
