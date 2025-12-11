@@ -27,6 +27,10 @@ WORKDIR /root/
 # Copy binary from builder
 COPY --from=builder /app/confeet .
 
+# Copy config files
+COPY --from=builder /app/shared/config.dev.json ./shared/
+COPY --from=builder /app/shared/config.prod.json ./shared/
+
 # After build stage, before CMD
 # COPY ./frontend /frontend
 
