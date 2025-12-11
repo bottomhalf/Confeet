@@ -37,7 +37,7 @@ ENV CONFIG_PATH=./shared/config.dev.json
 # After build stage, before CMD
 # COPY ./frontend /frontend
 
-# Expose port (replace with your WebSocket port, e.g., 8080)
+# Expose ports (app server)
 EXPOSE 8080
 
 # Run the server

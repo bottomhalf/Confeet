@@ -2,6 +2,7 @@ package approuters
 
 import (
 	"Confeet/internal/configuration"
+	"Confeet/internal/hub"
 	"context"
 	"fmt"
 	"log"
@@ -18,47 +19,16 @@ import (
 func StartServer(container *configuration.Container) {
 	h := container.Hub
 
-	// WebSocket handler
-	http.HandleFunc("/cf/meet/"+container.Config.ChatDatabase.SocketRoute, func(w http.ResponseWriter, r *http.Request) {
-		userId := r.URL.Query().Get("userId")
-		if userId == "" {
-			http.Error(w, "userId is required", http.StatusBadRequest)
-			return
-		}
-		conversationID := r.URL.Query().Get("conversationId")
-		if conversationID == "" {
-			http.Error(w, "conversationId is required", http.StatusBadRequest)
-			return
-		}
-
-		h.ServeWS(w, r, userId, conversationID)
-	})
-
-	// Create servers with explicit configuration
-	socketServer := &http.Server{
-		Addr:         fmt.Sprintf(":%d", container.Config.Server.SocketPort),
-		Handler:      nil, // uses DefaultServeMux
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
-	}
-
-	appServer := createAppServer(container)
+	// Create app server (includes WebSocket route)
+	appServer := configureServer(container, h)
 
 	// Channel to listen for errors from servers
-	serverErrors := make(chan error, 2)
-
-	// Start socket server
-	go func() {
-		log.Printf("Socket server starting at ws://localhost:%d", container.Config.Server.SocketPort)
-		if err := socketServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			serverErrors <- fmt.Errorf("socket server error: %w", err)
-		}
-	}()
+	serverErrors := make(chan error, 1)
 
 	// Start application server
 	go func() {
-		log.Printf("Application server starting at http://localhost:%d", container.Config.Server.AppPort)
+		log.Printf("Application server starting at http://localhost:%d", container.Config.Server.SocketPort)
+		log.Printf("WebSocket endpoint: ws://localhost:%d/cf/meet/%s", container.Config.Server.SocketPort, container.Config.ChatDatabase.SocketRoute)
 		if err := appServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			serverErrors <- fmt.Errorf("app server error: %w", err)
 		}
@@ -84,11 +54,6 @@ func StartServer(container *configuration.Container) {
 	log.Println("Stopping hub and closing all WebSocket connections...")
 	h.Stop()
 
-	log.Println("Shutting down socket server...")
-	if err := socketServer.Shutdown(ctx); err != nil {
-		log.Printf("Socket server shutdown error: %v", err)
-	}
-
 	log.Println("Shutting down application server...")
 	if err := appServer.Shutdown(ctx); err != nil {
 		log.Printf("App server shutdown error: %v", err)
@@ -97,7 +62,7 @@ func StartServer(container *configuration.Container) {
 	log.Println("Graceful shutdown complete")
 }
 
-func createAppServer(container *configuration.Container) *http.Server {
+func configureServer(container *configuration.Container, h *hub.Hub) *http.Server {
 	router := gin.Default()
 
 	// Configure CORS
@@ -114,6 +79,23 @@ func createAppServer(container *configuration.Container) *http.Server {
 		c.JSON(http.StatusOK, gin.H{
 			"message": "Welcome to Confeet Application Server!",
 		})
+	})
+
+	// WebSocket route
+	wsRoute := "/cf/meet/" + container.Config.ChatDatabase.SocketRoute
+	router.GET(wsRoute, func(c *gin.Context) {
+		userId := c.Query("userId")
+		if userId == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "userId is required"})
+			return
+		}
+		conversationID := c.Query("conversationId")
+		if conversationID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "conversationId is required"})
+			return
+		}
+
+		h.ServeWS(c.Writer, c.Request, userId, conversationID)
 	})
 
 	UserRouters(router, container)
