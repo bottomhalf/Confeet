@@ -97,7 +97,7 @@ func (h *Hub) handleEvent(ev event.WsEvent, c *Client) {
 			return
 		}
 
-		log.Printf("New message from %d: %s\n", message.SenderID, message.Body)
+		log.Printf("New message from %s: %s\n", message.SenderID, message.Body)
 		message.Status = model.MessageSentId
 
 		// Save message to MongoDB before publishing
