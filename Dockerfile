@@ -31,14 +31,14 @@ COPY --from=builder /app/confeet .
 COPY --from=builder /app/shared/config.dev.json ./shared/
 COPY --from=builder /app/shared/config.prod.json ./shared/
 
-# Set config path environment variable
-ENV CONFIG_PATH=./shared/config.dev.json
+# Set config path environment variable (use prod config in production)
+ENV CONFIG_PATH=./shared/config.prod.json
 
 # After build stage, before CMD
 # COPY ./frontend /frontend
 
-# Expose ports (app server)
-EXPOSE 8080
+# Expose ports (socket server on 8402)
+EXPOSE 8402
 
 # Run the server
 CMD ["./confeet"]
