@@ -25,13 +25,15 @@ type Conversation struct {
 
 // Participant represents a user in a conversation
 type Participant struct {
-	UserID   string    `json:"userId" bson:"user_id"`
-	Username string    `json:"username" bson:"username"`
-	JoinedAt time.Time `json:"joinedAt" bson:"joined_at"`
-	Role     string    `json:"role" bson:"role"`
-	Email    string    `json:"email" bson:"email"`
-	Avatar   string    `json:"avatar" bson:"avatar"`
-	IsActive bool      `json:"isActive" bson:"is_active"`
+	UserID    string    `json:"userId" bson:"user_id"`
+	Username  string    `json:"username" bson:"username"`
+	JoinedAt  time.Time `json:"joinedAt" bson:"joined_at"`
+	Role      string    `json:"role" bson:"role"`
+	FirstName string    `json:"firstName" bson:"first_name"`
+	LastName  string    `json:"lastName" bson:"last_name"`
+	Email     string    `json:"email" bson:"email"`
+	Avatar    string    `json:"avatar" bson:"avatar"`
+	IsActive  bool      `json:"isActive" bson:"is_active"`
 }
 
 // LastMessage stores the most recent message preview
