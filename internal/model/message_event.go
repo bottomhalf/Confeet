@@ -20,5 +20,6 @@ type MessageSeen struct {
 type TypingIndicator struct {
 	ConversationID string `json:"conversationId"`
 	UserID         string `json:"userId"`
+	Type           string `json:"type"` // "start" or "stop"
 	IsTyping       bool   `json:"isTyping"`
 }

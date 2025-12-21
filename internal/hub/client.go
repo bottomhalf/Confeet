@@ -8,17 +8,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
 type ClientList map[*Client]bool
 
 type Client struct {
-	ID             string
-	ConversationID string
-	conn           *websocket.Conn
-	manager        *Hub
-	egress         chan event.WsEvent
+	ID      string
+	userId  string
+	conn    *websocket.Conn
+	manager *Hub
+	egress  chan event.WsEvent
 
 	// cancel or stop goroutine
 	cancel         context.CancelFunc
@@ -43,11 +44,14 @@ var (
 	inboundSendTimeout = 500 * time.Millisecond // timeout for sending to inbound channel
 )
 
-func RegisterClient(id string, conversationID string, conn *websocket.Conn, h *Hub) {
+// RegisterClient creates a new client with a single WebSocket connection
+func RegisterClient(userId string, conn *websocket.Conn, h *Hub) *Client {
 	ctx, cancel := context.WithCancel(context.Background())
+	clientID := uuid.New().String()
+
 	client := &Client{
-		ID:             id,
-		ConversationID: conversationID,
+		ID:             clientID,
+		userId:         userId,
 		conn:           conn,
 		manager:        h,
 		egress:         make(chan event.WsEvent, sendBufSize),
@@ -63,10 +67,13 @@ func RegisterClient(id string, conversationID string, conn *websocket.Conn, h *H
 		// registered
 		go client.ReadMessages()
 		go client.WriteMessage()
+		log.Printf("client %s registered for user %s", clientID, userId)
+		return client
 	case <-time.After(registerTimeout):
-		log.Printf("failed to register client %s: timeout", id)
+		log.Printf("failed to register client %s: timeout", clientID)
 		cancel()
 		conn.Close()
+		return nil
 	}
 }
 
@@ -103,7 +110,6 @@ func (c *Client) ReadMessages() {
 					return
 				}
 
-				// 🔹 Unexpected abnormal close
 				if websocket.IsUnexpectedCloseError(err,
 					websocket.CloseInternalServerErr,
 					websocket.CloseProtocolError,
@@ -113,7 +119,7 @@ func (c *Client) ReadMessages() {
 
 				if ne, ok := err.(net.Error); ok && ne.Timeout() {
 					log.Printf("client %s timed out - closing connection", c.ID)
-					return // <-- triggers remove + cleanup
+					return
 				}
 
 				// For other errors, log and exit (cleanup will happen in defer)

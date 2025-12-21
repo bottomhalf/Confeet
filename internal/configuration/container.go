@@ -51,12 +51,13 @@ func BuildContainer() (*Container, error) {
 	logger, _ := zap.NewProduction()
 
 	messageRepo := repo.NewMessageRepository(con, mongoRepo, logger)
+	conversationRepo := repo.NewConversationRepository(con, logger)
 	userRepo := repo.NewUserRepository(con, mongoRepo)
 	userService := service.NewUserService(userRepo, messageRepo)
 	userHandler := handler.NewUserHandler(userService)
 
-	// Create Hub with MessageRepository
-	Hub := hub.NewHub(messageRepo)
+	// Create Hub with repositories
+	Hub := hub.NewHub(messageRepo, conversationRepo)
 
 	return &Container{
 		UserHandler: userHandler,

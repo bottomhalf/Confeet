@@ -12,6 +12,7 @@ type MongoConfig struct {
 	SessionsCollection string `json:"sessionsCollection"`
 	ProductsCollection string `json:"productsCollection"`
 	SocketRoute        string `json:"socketRoute"`
+	UUIDNamespace      string `json:"uuid_namespace"`
 }
 
 type DatabaseConfig struct {
