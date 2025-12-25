@@ -7,11 +7,14 @@ import (
 )
 
 var (
-	MessageRecievedId = 1
-	MessageSentId     = 2
-	MessageSeenId     = 3
-	MessageEditedId   = 4
-	MessageDeletedId  = 5
+	NEW_MESSAGE       = 1
+	MESSAGE_SENT      = 2
+	MESSAGE_SEEN      = 3
+	MESSAGE_EDITED    = 4
+	MESSAGE_DELETED   = 5
+	MESSAGE_DELIVERED = 6
+	USER_TYPING       = 7
+	ERROR             = 8
 )
 
 // Message represents a chat message in MongoDB

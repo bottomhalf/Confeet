@@ -2,10 +2,12 @@ package model
 
 // MessageDelivered - lightweight event for delivery confirmation
 type MessageDelivered struct {
-	MessageID      string `json:"messageId"`
+	Id             string `json:"id"`
+	UserId         string `json:"userId"`
 	ConversationID string `json:"conversationId"`
 	DeliveredTo    string `json:"deliveredTo"`
 	DeliveredAt    string `json:"deliveredAt"`
+	Status         int    `json:"status"`
 }
 
 // MessageSeen - for read receipts

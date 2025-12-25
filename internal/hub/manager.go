@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 const (
@@ -76,6 +77,7 @@ type Hub struct {
 	// Online users - maps userId to their Client connection
 	onlineUsers   map[string]*Client
 	onlineUsersMu sync.RWMutex
+	callHandler   *CallHandler
 
 	register   chan *Client
 	unregister chan *Client
@@ -103,6 +105,10 @@ func NewHub(messageRepo repo.MessageRepository, conversationRepo repo.Conversati
 		ctx:              ctx,
 		cancel:           cancel,
 	}
+
+	// Initialize call handler with hub reference
+	h.callHandler = NewCallHandler()
+	h.callHandler.SetHub(h)
 
 	for i := 0; i < shardCount; i++ {
 		h.shards[i] = &roomBucket{
@@ -139,6 +145,12 @@ func NewHub(messageRepo repo.MessageRepository, conversationRepo repo.Conversati
 }
 
 func (h *Hub) handleEvent(ev event.WsEvent, c *Client) {
+	// Route call events to CallHandler
+	if IsCallEvent(ev.Event) {
+		h.callHandler.HandleCallEvent(ev, c)
+		return
+	}
+
 	switch ev.Event {
 	case event.EventSendMessage:
 		var message model.Message
@@ -156,7 +168,7 @@ func (h *Hub) handleEvent(ev event.WsEvent, c *Client) {
 		}
 
 		log.Printf("New message from %s in conversation %s: %s\n", message.SenderID, conversationID, message.Body)
-		message.Status = model.MessageSentId
+		message.Status = model.MESSAGE_SENT
 
 		// Save message to MongoDB before publishing
 		ctx, cancel := context.WithTimeout(h.ctx, 5*time.Second)
@@ -169,10 +181,64 @@ func (h *Hub) handleEvent(ev event.WsEvent, c *Client) {
 			return
 		}
 
+		id, err := primitive.ObjectIDFromHex(insertedID)
+		if err != nil {
+			log.Printf("failed to convert inserted ID to ObjectID: %v", err)
+			h.sendErrorToClient(c, "save_failed", "Failed to save message, please retry")
+			return
+		}
+
+		message.ID = id
+		var lastMessage = &model.LastMessage{
+			MessageId: insertedID,
+			Content:   message.Body,
+			SenderId:  message.SenderID,
+			SentAt:    time.Now(),
+		}
+		// Save message to MongoDB before publishing
+		ctx, cancel = context.WithTimeout(h.ctx, 5*time.Second)
+		err = h.conversationRepo.UpdateLastMessage(ctx, message.ConversationID.Hex(), lastMessage)
+		cancel()
+
+		if err != nil {
+			log.Printf("failed to save message to MongoDB: %v", err)
+			h.sendErrorToClient(c, "save_failed", "Failed to save message, please retry")
+			return
+		}
+
 		log.Printf("Message saved to MongoDB with ID: %s", insertedID)
 
 		ev.Payload, _ = json.Marshal(message)
+		ev.Event = event.EventNewMessage
 		h.publishToRoom(ev, conversationID)
+
+	case event.EventMarkDelivered:
+		var deliver model.MessageDelivered
+		if err := json.Unmarshal(ev.Payload, &deliver); err != nil {
+			log.Printf("failed to unmarshal delivery indicator: %v", err)
+			return
+		}
+
+		if deliver.ConversationID == "" {
+			return
+		}
+
+		deliver.Status = model.MESSAGE_DELIVERED
+
+		ctx, cancel := context.WithTimeout(h.ctx, 5*time.Second)
+		err := h.conversationRepo.UpdateMessageDelivery(ctx, deliver)
+		cancel()
+
+		if err != nil {
+			log.Printf("failed to save message to MongoDB: %v", err)
+			h.sendErrorToClient(c, "save_failed", "Failed to save message, please retry")
+			return
+		}
+
+		log.Printf("Message %s is delivered in conversation %s\n", deliver.Id, deliver.ConversationID)
+
+		ev.Event = event.EventDelivered
+		h.publishToRoom(ev, deliver.ConversationID)
 
 	case event.EventTyping:
 		var typing model.TypingIndicator
@@ -186,6 +252,8 @@ func (h *Hub) handleEvent(ev event.WsEvent, c *Client) {
 		}
 
 		log.Printf("User %s is typing in conversation %s\n", typing.UserID, typing.ConversationID)
+
+		ev.Event = event.EventTyping
 		h.publishToRoom(ev, typing.ConversationID)
 
 	default:
@@ -198,30 +266,8 @@ func (h *Hub) publishToRoom(ev event.WsEvent, groupConversationID string) {
 	// Get the room from cache
 	room := h.GetRoom(groupConversationID)
 	if room == nil {
-		log.Printf("room %s not found in cache - fetching from database", groupConversationID)
-
-		// Fetch room details from database
-		ctx, cancel := context.WithTimeout(h.ctx, 5*time.Second)
-		conversation, err := h.conversationRepo.GetRoomDetail(ctx, groupConversationID)
-		cancel()
-
-		if err != nil {
-			log.Printf("failed to fetch room %s from database: %v", groupConversationID, err)
-			return
-		}
-
-		if conversation == nil {
-			log.Printf("room %s not found in database", groupConversationID)
-			return
-		}
-
-		// Set room members in cache from the fetched conversation
-		h.SetRoomMembers(groupConversationID, conversation.ParticipantIds)
-		room = h.GetRoom(groupConversationID)
-		if room == nil {
-			log.Printf("failed to create room %s in cache", groupConversationID)
-			return
-		}
+		log.Printf("room %s not found, cannot publish message", groupConversationID)
+		return
 	}
 
 	// Get list of members
@@ -231,8 +277,6 @@ func (h *Hub) publishToRoom(ev event.WsEvent, groupConversationID string) {
 		memberIDs = append(memberIDs, memberID)
 	}
 	room.mu.RUnlock()
-
-	ev.Event = event.EventMessageSent
 
 	// Find online clients for each member and send
 	h.onlineUsersMu.RLock()
@@ -247,21 +291,53 @@ func (h *Hub) publishToRoom(ev event.WsEvent, groupConversationID string) {
 
 	// Deliver to online clients without holding lock
 	for _, client := range onlineClients {
-		select {
-		case <-client.ctx.Done():
-			// client already closed, skip
-			log.Printf("client %s already closed, skipping", client.ID)
-		case client.egress <- ev:
-			// enqueued
-		case <-time.After(sendTimeout):
-			log.Printf("egress full for client %s in conversation %s", client.ID, groupConversationID)
-			if kickOnFull {
-				h.unregister <- client
+		// Use SafeSend to prevent panic on closed channel
+		if !client.SafeSend(ev, sendTimeout) {
+			if client.IsClosed() {
+				log.Printf("client %s already closed, skipping", client.ID)
+			} else {
+				log.Printf("egress full for client %s in conversation %s", client.ID, groupConversationID)
+				if kickOnFull {
+					h.unregister <- client
+				}
 			}
 		}
 	}
 
 	log.Printf("message published to %d/%d members in room %s", len(onlineClients), len(memberIDs), groupConversationID)
+}
+
+func (h *Hub) GetRoom(conversationID string) *Room {
+	// Get the room from cache
+	room := h.FindRoom(conversationID)
+	if room == nil {
+		log.Printf("room %s not found in cache - fetching from database", conversationID)
+
+		// Fetch room details from database
+		ctx, cancel := context.WithTimeout(h.ctx, 5*time.Second)
+		conversation, err := h.conversationRepo.GetRoomDetail(ctx, conversationID)
+		cancel()
+
+		if err != nil {
+			log.Printf("failed to fetch room %s from database: %v", conversationID, err)
+			return nil
+		}
+
+		if conversation == nil {
+			log.Printf("room %s not found in database", conversationID)
+			return nil
+		}
+
+		// Set room members in cache from the fetched conversation
+		h.SetRoomMembers(conversationID, conversation.ParticipantIds)
+		room = h.FindRoom(conversationID)
+		if room == nil {
+			log.Printf("failed to create room %s in cache", conversationID)
+			return nil
+		}
+	}
+
+	return room
 }
 
 // evictExpiredRooms periodically removes rooms that haven't been accessed recently
@@ -299,8 +375,8 @@ func (h *Hub) evictExpiredRooms() {
 	}
 }
 
-// GetRoom gets a room from cache, returns nil if not found
-func (h *Hub) GetRoom(conversationID string) *Room {
+// FindRoom gets a room from cache, returns nil if not found
+func (h *Hub) FindRoom(conversationID string) *Room {
 	sh := getShard(conversationID)
 	bucket := h.shards[sh]
 
@@ -399,11 +475,8 @@ func (h *Hub) sendErrorToClient(c *Client, code string, message string) {
 		Payload: payload,
 	}
 
-	select {
-	case c.egress <- errorEvent:
-		// sent
-	case <-time.After(sendTimeout):
-		log.Printf("failed to send error to client %s: timeout", c.ID)
+	if !c.SafeSend(errorEvent, sendTimeout) {
+		log.Printf("failed to send error to client %s: client closed or timeout", c.ID)
 	}
 }
 

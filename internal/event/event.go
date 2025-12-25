@@ -17,9 +17,12 @@ const (
 	EventSeen        = "seen"
 	EventUserTyping  = "user_typing"
 	EventError       = "error"
+	Direct           = "direct"
+	Group            = "group"
 )
 
 type WsEvent struct {
 	Event   string          `json:"event"`
+	Type    string          `json:"type"`
 	Payload json.RawMessage `json:"payload"`
 }

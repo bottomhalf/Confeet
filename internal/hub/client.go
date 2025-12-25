@@ -14,6 +14,15 @@ import (
 
 type ClientList map[*Client]bool
 
+// Client status constants
+const (
+	StatusOnline  = "online"
+	StatusBusy    = "busy"
+	StatusInCall  = "in_call"
+	StatusAway    = "away"
+	StatusOffline = "offline"
+)
+
 type Client struct {
 	ID      string
 	userId  string
@@ -21,12 +30,19 @@ type Client struct {
 	manager *Hub
 	egress  chan event.WsEvent
 
+	// User status for calls
+	status                 string // "online", "busy", "in_call", "away"
+	currentConversationID  string // conversationID if in a call
+	statusMu               sync.RWMutex
+
 	// cancel or stop goroutine
 	cancel         context.CancelFunc
 	ctx            context.Context
 	once           sync.Once
 	connClosed     chan struct{}
 	connClosedOnce sync.Once
+	closed         bool         // tracks if client is closed
+	closedMu       sync.RWMutex // protects closed flag
 }
 
 var (
@@ -55,6 +71,7 @@ func RegisterClient(userId string, conn *websocket.Conn, h *Hub) *Client {
 		conn:           conn,
 		manager:        h,
 		egress:         make(chan event.WsEvent, sendBufSize),
+		status:         StatusOnline,
 		cancel:         cancel,
 		ctx:            ctx,
 		once:           sync.Once{},
@@ -213,6 +230,11 @@ func (c *Client) Send(ev event.WsEvent) {
 
 func (c *Client) Close() {
 	c.once.Do(func() {
+		// Mark as closed BEFORE closing the channel
+		c.closedMu.Lock()
+		c.closed = true
+		c.closedMu.Unlock()
+
 		c.cancel()
 		close(c.egress)
 
@@ -227,4 +249,84 @@ func (c *Client) Close() {
 			}
 		}()
 	})
+}
+
+// IsClosed returns true if the client has been closed
+func (c *Client) IsClosed() bool {
+	c.closedMu.RLock()
+	defer c.closedMu.RUnlock()
+	return c.closed
+}
+
+// SafeSend attempts to send an event to the client's egress channel.
+// Returns true if sent successfully, false if client is closed or timeout.
+func (c *Client) SafeSend(ev event.WsEvent, timeout time.Duration) bool {
+	// Check if closed first (fast path)
+	if c.IsClosed() {
+		return false
+	}
+
+	select {
+	case <-c.ctx.Done():
+		return false
+	case c.egress <- ev:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
+// -----------------------------------------------------------------
+// Status Management Methods
+// -----------------------------------------------------------------
+
+// GetStatus returns the current status of the client
+func (c *Client) GetStatus() string {
+	c.statusMu.RLock()
+	defer c.statusMu.RUnlock()
+	return c.status
+}
+
+// SetStatus sets the client status
+func (c *Client) SetStatus(status string) {
+	c.statusMu.Lock()
+	defer c.statusMu.Unlock()
+	c.status = status
+}
+
+// GetCurrentConversationID returns the current call conversation ID
+func (c *Client) GetCurrentConversationID() string {
+	c.statusMu.RLock()
+	defer c.statusMu.RUnlock()
+	return c.currentConversationID
+}
+
+// SetCallStatus marks the client as in a call with the given conversation
+func (c *Client) SetCallStatus(conversationID string) {
+	c.statusMu.Lock()
+	defer c.statusMu.Unlock()
+	c.status = StatusInCall
+	c.currentConversationID = conversationID
+}
+
+// ClearCallStatus resets the client status to online and clears conversation
+func (c *Client) ClearCallStatus() {
+	c.statusMu.Lock()
+	defer c.statusMu.Unlock()
+	c.status = StatusOnline
+	c.currentConversationID = ""
+}
+
+// IsInCall returns true if the client is currently in a call
+func (c *Client) IsInCall() bool {
+	c.statusMu.RLock()
+	defer c.statusMu.RUnlock()
+	return c.status == StatusInCall
+}
+
+// IsAvailableForCall returns true if client can receive a call
+func (c *Client) IsAvailableForCall() bool {
+	c.statusMu.RLock()
+	defer c.statusMu.RUnlock()
+	return c.status == StatusOnline
 }

@@ -19,6 +19,8 @@ type conversationRepository struct {
 
 type ConversationRepository interface {
 	GetRoomDetail(ctx context.Context, conversationID string) (*model.Conversation, error)
+	UpdateLastMessage(ctx context.Context, id string, lastMessage *model.LastMessage) error
+	UpdateMessageDelivery(ctx context.Context, deliver model.MessageDelivered) error
 }
 
 func NewConversationRepository(mongo *mongo.Database, logger *zap.Logger) ConversationRepository {
@@ -79,4 +81,112 @@ func (r *conversationRepository) ensureTimeout(ctx context.Context, timeout time
 		return context.WithCancel(ctx)
 	}
 	return context.WithTimeout(ctx, timeout)
+}
+
+// UpdateLastMessage updates the lastMessage content field of a conversation by ID
+func (r *conversationRepository) UpdateLastMessage(ctx context.Context, id string, lastMessage *model.LastMessage) error {
+	if id == "" {
+		return ErrInvalidChannelID
+	}
+
+	ctx, cancel := r.ensureTimeout(ctx, defaultReadTimeout)
+	defer cancel()
+
+	objectID, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		r.logger.Error("invalid conversation ID format",
+			zap.String("conversation_id", id),
+			zap.Error(err),
+		)
+		return fmt.Errorf("invalid conversation ID format: %w", err)
+	}
+
+	collection := r.con.Collection("conversations")
+
+	update := bson.M{
+		"$set": bson.M{
+			"last_message":    lastMessage,
+			"last_message_at": time.Now(),
+			"updated_at":      time.Now(),
+		},
+	}
+
+	result, err := collection.UpdateOne(ctx, bson.M{"_id": objectID}, update)
+	if err != nil {
+		r.logger.Error("failed to update last message",
+			zap.String("conversation_id", id),
+			zap.Error(err),
+		)
+		return fmt.Errorf("failed to update last message: %w", err)
+	}
+
+	if result.MatchedCount == 0 {
+		r.logger.Debug("conversation not found for update",
+			zap.String("conversation_id", id),
+		)
+		return fmt.Errorf("conversation not found: %s", id)
+	}
+
+	r.logger.Debug("last message updated successfully",
+		zap.String("conversation_id", id),
+	)
+
+	return nil
+}
+
+// UpdateLastMessage updates the lastMessage content field of a conversation by ID
+func (r *conversationRepository) UpdateMessageDelivery(ctx context.Context, deliver model.MessageDelivered) error {
+	if deliver.Id == "" {
+		return ErrInvalidChannelID
+	}
+
+	ctx, cancel := r.ensureTimeout(ctx, defaultReadTimeout)
+	defer cancel()
+
+	// Convert string MessageID to ObjectID for querying by _id
+	objectID, err := primitive.ObjectIDFromHex(deliver.Id)
+	if err != nil {
+		r.logger.Error("invalid message ID format",
+			zap.String("message_id", deliver.Id),
+			zap.Error(err),
+		)
+		return fmt.Errorf("invalid message ID format: %w", err)
+	}
+
+	messages := r.con.Collection("messages")
+
+	update := bson.M{
+		"$set": bson.M{
+			"status": deliver.Status,
+		},
+		"$push": bson.M{
+			"receivers": bson.M{
+				"user_id":      deliver.UserId,
+				"delivered_at": deliver.DeliveredAt,
+				"status":       deliver.Status,
+			},
+		},
+	}
+
+	result, err := messages.UpdateOne(ctx, bson.M{"_id": objectID}, update)
+	if err != nil {
+		r.logger.Error("failed to update delivery status",
+			zap.String("message_id", deliver.Id),
+			zap.Error(err),
+		)
+		return fmt.Errorf("failed to update delivery status: %w", err)
+	}
+
+	if result.MatchedCount == 0 {
+		r.logger.Debug("message not found for update",
+			zap.String("message_id", deliver.Id),
+		)
+		return fmt.Errorf("message not found: %s", deliver.Id)
+	}
+
+	r.logger.Debug("delivery status updated successfully",
+		zap.String("message_id", deliver.Id),
+	)
+
+	return nil
 }

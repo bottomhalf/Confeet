@@ -38,11 +38,10 @@ type Participant struct {
 
 // LastMessage stores the most recent message preview
 type LastMessage struct {
-	MessageId  string    `json:"messageId" bson:"message_id"`
-	Content    string    `json:"content" bson:"content"`
-	SenderId   string    `json:"senderId" bson:"sender_id"`
-	SenderName string    `json:"senderName" bson:"sender_name"`
-	SentAt     time.Time `json:"sentAt" bson:"sent_at"`
+	MessageId string    `json:"messageId" bson:"message_id"`
+	Content   string    `json:"content" bson:"content"`
+	SenderId  string    `json:"senderId" bson:"sender_id"`
+	SentAt    time.Time `json:"sentAt" bson:"sent_at"`
 }
 
 // ConversationSettings holds conversation-level settings
