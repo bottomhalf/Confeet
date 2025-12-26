@@ -96,6 +96,7 @@ func configureServer(container *configuration.Container, h *hub.Hub) *http.Serve
 
 	UserRouters(router, container)
 	MeetingRouters(router, container)
+	MonitorRouters(router, container)
 
 	return &http.Server{
 		Addr:         fmt.Sprintf(":%d", container.Config.Server.SocketPort),

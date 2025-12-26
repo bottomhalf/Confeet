@@ -36,3 +36,23 @@ jobs:
         with:
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/confeet:latest
+
+      # Perform deployment
+      - name: SSH to Remote server and deploy
+        run: |
+          install -m 600 -D /dev/null ~/.ssh/id_rsa
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} > ~/.ssh/known_hosts
+
+      - name: Apply new changes
+        run: |
+            echo "Deleting existing Kubernetes resources"
+            ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "microk8s kubectl delete -f /root/kube.ws/confeet/socket-server/confeet-websocket-deploy.yml"
+
+            echo "Applying new Kubernetes configuration"
+            ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "microk8s kubectl apply -f /root/kube.ws/confeet/socket-server/confeet-websocket-deploy.yml"
+
+      - name: cleanup
+        run: |
+          echo "Cleaning up SSH credentials"
+          rm -rf ~/.ssh
