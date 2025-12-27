@@ -136,6 +136,17 @@ type CallBusyEvent struct {
 	Timestamp      int64  `json:"timestamp"`
 }
 
+// CallMissedEvent is sent to busy callee to notify them of a missed call
+type CallMissedEvent struct {
+	ConversationID string `json:"conversationId"`
+	CallerID       string `json:"callerId"`
+	CallerName     string `json:"callerName,omitempty"`   // Display name
+	CallerAvatar   string `json:"callerAvatar,omitempty"` // Avatar URL
+	CallType       string `json:"callType"`               // "audio" or "video"
+	Reason         string `json:"reason"`                 // "busy", "timeout", etc.
+	Timestamp      int64  `json:"timestamp"`
+}
+
 // CallErrorEvent is sent when a call error occurs
 type CallErrorEvent struct {
 	CallID    string `json:"callId,omitempty"`

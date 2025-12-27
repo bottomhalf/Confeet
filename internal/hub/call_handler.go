@@ -117,7 +117,10 @@ func (ch *CallHandler) handleCallInitiate(ev event.WsEvent, c *Client) {
 	// Check if any callee is busy
 	busyUsers := ch.getBusyCallees(payload.CalleeIDs)
 	if len(busyUsers) > 0 {
-		// For 1-to-1 call, send busy signal
+		// Notify busy users about the missed call (Option A: Teams-like behavior)
+		ch.notifyBusyCallees(payload.ConversationID, c.userId, payload.CallType, busyUsers)
+
+		// For 1-to-1 call, send busy signal to caller
 		if len(payload.CalleeIDs) == 1 {
 			ch.sendBusySignal(c, payload.ConversationID, busyUsers[0])
 			return
@@ -644,6 +647,34 @@ func (ch *CallHandler) sendBusySignal(c *Client, conversationID, busyUserID stri
 	}
 
 	c.SafeSend(ev, sendTimeout)
+}
+
+// notifyMissedCall sends a missed call notification to a busy user
+func (ch *CallHandler) notifyMissedCall(conversationID, calleeID, callerID, callType, reason string) {
+	missedEvent := model.CallMissedEvent{
+		ConversationID: conversationID,
+		CallerID:       callerID,
+		// CallerName and CallerAvatar can be fetched from user service if needed
+		CallType:  callType,
+		Reason:    reason,
+		Timestamp: time.Now().Unix(),
+	}
+
+	payload, _ := json.Marshal(missedEvent)
+	ev := event.WsEvent{
+		Event:   event.EventCallMissed,
+		Payload: payload,
+	}
+
+	ch.sendToUser(calleeID, ev)
+}
+
+// notifyBusyCallees sends missed call notifications to all busy callees
+func (ch *CallHandler) notifyBusyCallees(conversationID, callerID, callType string, busyUserIDs []string) {
+	for _, busyUserID := range busyUserIDs {
+		ch.notifyMissedCall(conversationID, busyUserID, callerID, callType, event.CallEndReasonBusy)
+		log.Printf("Sent missed call notification to busy user %s for conversation %s", busyUserID, conversationID)
+	}
 }
 
 func (ch *CallHandler) sendRoomInfo(c *Client, callID, callType, roomName, token string) {

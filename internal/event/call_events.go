@@ -44,6 +44,9 @@ const (
 	// EventCallBusy - Notify caller that callee is busy
 	EventCallBusy = "call:busy"
 
+	// EventCallMissed - Notify busy callee that they missed a call
+	EventCallMissed = "call:missed"
+
 	// EventCallError - Notify of call-related errors
 	EventCallError = "call:error"
 )
