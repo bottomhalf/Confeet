@@ -49,6 +49,12 @@ const (
 
 	// EventCallError - Notify of call-related errors
 	EventCallError = "call:error"
+
+	// EventCallParticipantJoined - Notify that a participant joined the group call
+	EventCallParticipantJoined = "call:participant_joined"
+
+	// EventCallParticipantLeft - Notify that a participant left the group call
+	EventCallParticipantLeft = "call:participant_left"
 )
 
 // Call Types

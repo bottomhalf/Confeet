@@ -155,6 +155,23 @@ type CallErrorEvent struct {
 	Timestamp int64  `json:"timestamp"`
 }
 
+// CallParticipantJoinedEvent is sent to other participants when someone joins the call
+type CallParticipantJoinedEvent struct {
+	CallID    string `json:"callId"`
+	UserID    string `json:"userId"`    // User who joined
+	UserName  string `json:"userName"`  // Display name (optional)
+	Timestamp int64  `json:"timestamp"`
+}
+
+// CallParticipantLeftEvent is sent to other participants when someone leaves the call
+type CallParticipantLeftEvent struct {
+	CallID    string `json:"callId"`
+	UserID    string `json:"userId"`           // User who left
+	Reason    string `json:"reason,omitempty"` // Why they left
+	Duration  int    `json:"duration"`         // How long they were in the call
+	Timestamp int64  `json:"timestamp"`
+}
+
 // -----------------------------------------------------------------
 // LiveKit Integration
 // -----------------------------------------------------------------

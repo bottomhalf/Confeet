@@ -14,21 +14,40 @@ type CallHandler struct {
 	hub *Hub
 
 	// Active calls - maps conversationID to call state
-	activeCalls   map[string]*ActiveCall
+	activeCalls   map[string]*ActiveGroupCall
 	activeCallsMu sync.RWMutex
 }
 
-// ActiveCall tracks the state of an ongoing call attempt
-type ActiveCall struct {
+// ParticipantStatus tracks individual callee state in a group call
+type ParticipantStatus int
+
+const (
+	ParticipantStatusRinging  ParticipantStatus = 1
+	ParticipantStatusAccepted ParticipantStatus = 2
+	ParticipantStatusRejected ParticipantStatus = 3
+	ParticipantStatusTimeout  ParticipantStatus = 4
+	ParticipantStatusLeft     ParticipantStatus = 5
+)
+
+// CallParticipant tracks state of each callee in a group call
+type CallParticipant struct {
+	UserID       string
+	Status       ParticipantStatus
+	JoinedAt     *time.Time // When they accepted/joined
+	LeftAt       *time.Time // When they left/rejected
+	LiveKitToken string     // Their individual LiveKit token
+}
+
+// ActiveGroupCall tracks the state of an ongoing call (1-to-1 or group)
+type ActiveGroupCall struct {
 	ConversationID string
 	CallerID       string
-	CalleeIDs      []string
 	CallType       string
-	Status         int
+	Status         int // Overall call status
 	Timeout        int
 	CreatedAt      time.Time
-	AcceptedBy     string // UserID who accepted (for 1-to-1)
-	AcceptedAt     *time.Time
+	Participants   map[string]*CallParticipant // Maps userID to their participation state
+	RoomName       string                      // LiveKit room name
 	mu             sync.RWMutex
 }
 
@@ -36,7 +55,7 @@ type ActiveCall struct {
 // Note: Call SetHub() after creating Hub to complete the initialization
 func NewCallHandler() *CallHandler {
 	return &CallHandler{
-		activeCalls: make(map[string]*ActiveCall),
+		activeCalls: make(map[string]*ActiveGroupCall),
 	}
 }
 
@@ -133,15 +152,28 @@ func (ch *CallHandler) handleCallInitiate(ev event.WsEvent, c *Client) {
 		}
 	}
 
+	// Generate LiveKit room name
+	roomName := "room_" + payload.ConversationID
+
+	// Create participants map
+	participants := make(map[string]*CallParticipant)
+	for _, calleeID := range payload.CalleeIDs {
+		participants[calleeID] = &CallParticipant{
+			UserID: calleeID,
+			Status: ParticipantStatusRinging,
+		}
+	}
+
 	// Create active call record
-	activeCall := &ActiveCall{
+	activeCall := &ActiveGroupCall{
 		ConversationID: payload.ConversationID,
 		CallerID:       c.userId,
-		CalleeIDs:      payload.CalleeIDs,
 		CallType:       payload.CallType,
 		Status:         event.CallStatusRinging,
 		Timeout:        timeout,
 		CreatedAt:      time.Now(),
+		Participants:   participants,
+		RoomName:       roomName,
 	}
 
 	// Register call and mark caller as busy
@@ -175,47 +207,76 @@ func (ch *CallHandler) handleCallAccept(ev event.WsEvent, c *Client) {
 		return
 	}
 
+	activeCall.mu.Lock()
+
 	// Verify callee is part of this call
-	if !ch.isCalleeInCall(activeCall, c.userId) {
+	participant, exists := activeCall.Participants[c.userId]
+	if !exists {
+		activeCall.mu.Unlock()
 		ch.sendCallError(c, payload.ConversationID, "not_callee", "You are not a callee of this call")
 		return
 	}
 
-	// Update call status
-	activeCall.mu.Lock()
-	if activeCall.Status != event.CallStatusRinging {
+	// Check if this participant has already accepted or left
+	if participant.Status != ParticipantStatusRinging {
 		activeCall.mu.Unlock()
-		ch.sendCallError(c, payload.ConversationID, "invalid_state", "Call is not in ringing state")
+		ch.sendCallError(c, payload.ConversationID, "already_responded", "You have already responded to this call")
 		return
 	}
-	activeCall.Status = event.CallStatusAccepted
-	activeCall.AcceptedBy = c.userId
+
+	// Check if call is still active (not ended/cancelled)
+	if activeCall.Status == event.CallStatusEnded || activeCall.Status == event.CallStatusCancelled {
+		activeCall.mu.Unlock()
+		ch.sendCallError(c, payload.ConversationID, "call_ended", "Call has already ended")
+		return
+	}
+
+	// Update participant status to accepted
 	now := time.Now()
-	activeCall.AcceptedAt = &now
+	participant.Status = ParticipantStatusAccepted
+	participant.JoinedAt = &now
+
+	// Generate LiveKit token for this participant
+	calleeToken := ch.generateLiveKitToken(activeCall.RoomName, c.userId)
+	participant.LiveKitToken = calleeToken
+
+	// Check if this is the first participant to accept
+	isFirstAccept := activeCall.Status == event.CallStatusRinging
+	if isFirstAccept {
+		// Transition call from Ringing to Accepted (call is now active)
+		activeCall.Status = event.CallStatusAccepted
+	}
+
+	// Check if this is a 1-to-1 call (only one participant)
+	is1to1Call := len(activeCall.Participants) == 1
+
 	activeCall.mu.Unlock()
 
-	log.Printf("Call accepted: %s by %s", payload.ConversationID, c.userId)
+	log.Printf("Call accepted: %s by %s (first accept: %v)", payload.ConversationID, c.userId, isFirstAccept)
 
-	// Generate LiveKit room and tokens
-	// TODO: Replace with actual LiveKit token generation
-	roomName := "room_" + payload.ConversationID
-	callerToken := ch.generateLiveKitToken(roomName, payload.CallerID)
-	calleeToken := ch.generateLiveKitToken(roomName, c.userId)
+	// Generate caller token
+	callerToken := ch.generateLiveKitToken(activeCall.RoomName, activeCall.CallerID)
 
-	// Notify caller that call was accepted
-	ch.notifyCallAccepted(payload.ConversationID, payload.CallerID, c.userId, roomName, callerToken)
+	// Notify caller that call was accepted (send room info if first accept)
+	ch.notifyCallAccepted(payload.ConversationID, activeCall.CallerID, c.userId, activeCall.RoomName, callerToken)
 
 	// Send room info to accepting callee
-	ch.sendRoomInfo(c, payload.ConversationID, activeCall.CallType, roomName, calleeToken)
+	ch.sendRoomInfo(c, payload.ConversationID, activeCall.CallType, activeCall.RoomName, calleeToken)
 
-	// For group calls, notify other callees that call was answered
-	// They should dismiss their incoming call UI
-	for _, calleeID := range activeCall.CalleeIDs {
-		if calleeID != c.userId {
-			ch.notifyCallAnsweredElsewhere(payload.ConversationID, calleeID)
-			ch.clearUserBusy(calleeID)
+	// For 1-to-1 calls, we're done - no need to notify other callees
+	if is1to1Call {
+		return
+	}
+
+	// For group calls: notify OTHER participants who are still ringing
+	// that someone joined (they can still join too)
+	activeCall.mu.RLock()
+	for userID, p := range activeCall.Participants {
+		if userID != c.userId && p.Status == ParticipantStatusRinging {
+			ch.notifyParticipantJoined(payload.ConversationID, userID, c.userId)
 		}
 	}
+	activeCall.mu.RUnlock()
 }
 
 // handleCallReject processes a call rejection
@@ -235,30 +296,43 @@ func (ch *CallHandler) handleCallReject(ev event.WsEvent, c *Client) {
 		return
 	}
 
+	activeCall.mu.Lock()
+
 	// Verify callee is part of this call
-	if !ch.isCalleeInCall(activeCall, c.userId) {
+	participant, exists := activeCall.Participants[c.userId]
+	if !exists {
+		activeCall.mu.Unlock()
 		ch.sendCallError(c, payload.ConversationID, "not_callee", "You are not a callee of this call")
 		return
 	}
+
+	// Update participant status
+	now := time.Now()
+	participant.Status = ParticipantStatusRejected
+	participant.LeftAt = &now
+
+	// Check how many are still ringing or have accepted
+	ringingCount, acceptedCount := ch.countParticipantStates(activeCall)
+	is1to1Call := len(activeCall.Participants) == 1
+
+	activeCall.mu.Unlock()
 
 	log.Printf("Call rejected: %s by %s (reason: %s)", payload.ConversationID, c.userId, payload.Reason)
 
 	// Clear this user's busy status
 	ch.clearUserBusy(c.userId)
 
+	// Notify caller about rejection
+	ch.notifyCallRejected(payload.ConversationID, activeCall.CallerID, c.userId, payload.Reason)
+
 	// For 1-to-1 call, end the call entirely
-	if len(activeCall.CalleeIDs) == 1 {
+	if is1to1Call {
 		ch.endCall(activeCall, event.CallEndReasonRejected)
-		ch.notifyCallRejected(payload.ConversationID, activeCall.CallerID, c.userId, payload.Reason)
 		return
 	}
 
-	// For group call, just notify caller and remove this callee
-	ch.notifyCallRejected(payload.ConversationID, activeCall.CallerID, c.userId, payload.Reason)
-	ch.removeCalleeFromCall(activeCall, c.userId)
-
-	// If all callees rejected, end the call
-	if len(activeCall.CalleeIDs) == 0 {
+	// For group call: if no one is ringing and no one has accepted, end the call
+	if ringingCount == 0 && acceptedCount == 0 {
 		ch.endCall(activeCall, event.CallEndReasonRejected)
 	}
 }
@@ -287,11 +361,13 @@ func (ch *CallHandler) handleCallCancel(ev event.WsEvent, c *Client) {
 
 	log.Printf("Call cancelled: %s by caller %s", payload.ConversationID, c.userId)
 
-	// Notify all callees that call was cancelled
-	for _, calleeID := range activeCall.CalleeIDs {
-		ch.notifyCallCancelled(payload.ConversationID, calleeID, c.userId)
-		ch.clearUserBusy(calleeID)
+	// Notify all participants that call was cancelled
+	activeCall.mu.RLock()
+	for userID := range activeCall.Participants {
+		ch.notifyCallCancelled(payload.ConversationID, userID, c.userId)
+		ch.clearUserBusy(userID)
 	}
+	activeCall.mu.RUnlock()
 
 	// End the call
 	ch.endCall(activeCall, event.CallEndReasonCancelled)
@@ -313,29 +389,47 @@ func (ch *CallHandler) handleCallTimeout(ev event.WsEvent, c *Client) {
 		return
 	}
 
+	activeCall.mu.Lock()
+
+	// Verify callee is part of this call
+	participant, exists := activeCall.Participants[c.userId]
+	if !exists {
+		activeCall.mu.Unlock()
+		ch.clearUserBusy(c.userId)
+		return
+	}
+
+	// Update participant status
+	now := time.Now()
+	participant.Status = ParticipantStatusTimeout
+	participant.LeftAt = &now
+
+	// Check how many are still ringing or have accepted
+	ringingCount, acceptedCount := ch.countParticipantStates(activeCall)
+	is1to1Call := len(activeCall.Participants) == 1
+
+	activeCall.mu.Unlock()
+
 	log.Printf("Call timeout: %s reported by %s", payload.ConversationID, c.userId)
 
 	// Clear this user's busy status
 	ch.clearUserBusy(c.userId)
 
 	// For 1-to-1 call, notify caller and end call
-	if len(activeCall.CalleeIDs) == 1 {
+	if is1to1Call {
 		ch.notifyCallTimedOut(payload.ConversationID, activeCall.CallerID)
 		ch.endCall(activeCall, event.CallEndReasonTimeout)
 		return
 	}
 
-	// For group call, remove this callee
-	ch.removeCalleeFromCall(activeCall, c.userId)
-
-	// If all callees timed out, end the call
-	if len(activeCall.CalleeIDs) == 0 {
+	// For group call: if no one is ringing and no one has accepted, end the call
+	if ringingCount == 0 && acceptedCount == 0 {
 		ch.notifyCallTimedOut(payload.ConversationID, activeCall.CallerID)
 		ch.endCall(activeCall, event.CallEndReasonTimeout)
 	}
 }
 
-// handleCallEnd processes a call end request
+// handleCallEnd processes a call end request (participant leaving or ending call)
 func (ch *CallHandler) handleCallEnd(ev event.WsEvent, c *Client) {
 	var payload model.CallEndPayload
 	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
@@ -351,54 +445,100 @@ func (ch *CallHandler) handleCallEnd(ev event.WsEvent, c *Client) {
 		return
 	}
 
-	log.Printf("Call ended: %s by %s (reason: %s)", payload.ConversationID, c.userId, payload.Reason)
-
-	// Calculate duration if call was connected
-	duration := 0
-	if activeCall.AcceptedAt != nil {
-		duration = int(time.Since(*activeCall.AcceptedAt).Seconds())
-	}
-
-	// Notify all participants
 	reason := payload.Reason
 	if reason == "" {
 		reason = event.CallEndReasonNormal
 	}
 
-	// Notify caller if ended by callee
-	if c.userId != activeCall.CallerID {
-		ch.notifyCallEnded(payload.ConversationID, activeCall.CallerID, c.userId, reason, duration)
+	activeCall.mu.Lock()
+
+	// Check if caller is ending the call (ends for everyone)
+	if c.userId == activeCall.CallerID {
+		activeCall.mu.Unlock()
+
+		log.Printf("Call ended by caller: %s by %s (reason: %s)", payload.ConversationID, c.userId, reason)
+
+		// Calculate duration from first accepted participant
+		duration := ch.calculateCallDuration(activeCall)
+
+		// Notify all participants that call has ended
+		for userID, p := range activeCall.Participants {
+			if p.Status == ParticipantStatusAccepted || p.Status == ParticipantStatusRinging {
+				ch.notifyCallEnded(payload.ConversationID, userID, c.userId, reason, duration)
+			}
+		}
+
+		// End the call
+		ch.endCall(activeCall, reason)
+		return
 	}
 
-	// Notify callees if ended by caller
-	if c.userId == activeCall.CallerID {
-		for _, calleeID := range activeCall.CalleeIDs {
-			ch.notifyCallEnded(payload.ConversationID, calleeID, c.userId, reason, duration)
+	// A participant is leaving the call
+	participant, exists := activeCall.Participants[c.userId]
+	if !exists {
+		activeCall.mu.Unlock()
+		ch.clearUserBusy(c.userId)
+		return
+	}
+
+	// Calculate duration for this participant
+	duration := 0
+	if participant.JoinedAt != nil {
+		duration = int(time.Since(*participant.JoinedAt).Seconds())
+	}
+
+	// Mark participant as left
+	now := time.Now()
+	participant.Status = ParticipantStatusLeft
+	participant.LeftAt = &now
+
+	// Count remaining active participants (still in call)
+	_, acceptedCount := ch.countParticipantStates(activeCall)
+	is1to1Call := len(activeCall.Participants) == 1
+
+	activeCall.mu.Unlock()
+
+	log.Printf("Participant left call: %s by %s (reason: %s)", payload.ConversationID, c.userId, reason)
+
+	// Clear this user's busy status
+	ch.clearUserBusy(c.userId)
+
+	// Notify caller that participant left
+	ch.notifyParticipantLeft(payload.ConversationID, activeCall.CallerID, c.userId, reason, duration)
+
+	// Notify other active participants
+	activeCall.mu.RLock()
+	for userID, p := range activeCall.Participants {
+		if userID != c.userId && p.Status == ParticipantStatusAccepted {
+			ch.notifyParticipantLeft(payload.ConversationID, userID, c.userId, reason, duration)
 		}
 	}
+	activeCall.mu.RUnlock()
 
-	// End the call
-	ch.endCall(activeCall, reason)
+	// For 1-to-1 call or if no participants left, end the call
+	if is1to1Call || acceptedCount == 0 {
+		ch.endCall(activeCall, reason)
+	}
 }
 
 // -----------------------------------------------------------------
 // Helper Methods - Call State Management
 // -----------------------------------------------------------------
 
-func (ch *CallHandler) registerCall(call *ActiveCall) {
+func (ch *CallHandler) registerCall(call *ActiveGroupCall) {
 	ch.activeCallsMu.Lock()
 	ch.activeCalls[call.ConversationID] = call
 	ch.activeCallsMu.Unlock()
 }
 
-func (ch *CallHandler) getActiveCall(conversationID string) *ActiveCall {
+func (ch *CallHandler) getActiveCall(conversationID string) *ActiveGroupCall {
 	ch.activeCallsMu.RLock()
 	call := ch.activeCalls[conversationID]
 	ch.activeCallsMu.RUnlock()
 	return call
 }
 
-func (ch *CallHandler) endCall(call *ActiveCall, reason string) {
+func (ch *CallHandler) endCall(call *ActiveGroupCall, reason string) {
 	ch.activeCallsMu.Lock()
 	delete(ch.activeCalls, call.ConversationID)
 	ch.activeCallsMu.Unlock()
@@ -406,35 +546,48 @@ func (ch *CallHandler) endCall(call *ActiveCall, reason string) {
 	// Clear caller busy status
 	ch.clearUserBusy(call.CallerID)
 
-	// Clear all callees busy status
-	for _, calleeID := range call.CalleeIDs {
-		ch.clearUserBusy(calleeID)
+	// Clear all participants busy status
+	call.mu.RLock()
+	for userID := range call.Participants {
+		ch.clearUserBusy(userID)
 	}
+	call.mu.RUnlock()
 
 	log.Printf("Call %s ended with reason: %s", call.ConversationID, reason)
 }
 
-func (ch *CallHandler) isCalleeInCall(call *ActiveCall, userID string) bool {
-	call.mu.RLock()
-	defer call.mu.RUnlock()
-	for _, id := range call.CalleeIDs {
-		if id == userID {
-			return true
+// countParticipantStates counts participants in ringing and accepted states
+// IMPORTANT: Must be called with call.mu held (either RLock or Lock)
+func (ch *CallHandler) countParticipantStates(call *ActiveGroupCall) (ringingCount, acceptedCount int) {
+	for _, p := range call.Participants {
+		switch p.Status {
+		case ParticipantStatusRinging:
+			ringingCount++
+		case ParticipantStatusAccepted:
+			acceptedCount++
 		}
 	}
-	return false
+	return
 }
 
-func (ch *CallHandler) removeCalleeFromCall(call *ActiveCall, userID string) {
-	call.mu.Lock()
-	defer call.mu.Unlock()
-	newCallees := make([]string, 0, len(call.CalleeIDs)-1)
-	for _, id := range call.CalleeIDs {
-		if id != userID {
-			newCallees = append(newCallees, id)
+// calculateCallDuration calculates duration from the earliest participant join time
+func (ch *CallHandler) calculateCallDuration(call *ActiveGroupCall) int {
+	call.mu.RLock()
+	defer call.mu.RUnlock()
+
+	var earliestJoin *time.Time
+	for _, p := range call.Participants {
+		if p.JoinedAt != nil {
+			if earliestJoin == nil || p.JoinedAt.Before(*earliestJoin) {
+				earliestJoin = p.JoinedAt
+			}
 		}
 	}
-	call.CalleeIDs = newCallees
+
+	if earliestJoin == nil {
+		return 0
+	}
+	return int(time.Since(*earliestJoin).Seconds())
 }
 
 // -----------------------------------------------------------------
@@ -511,7 +664,7 @@ func (ch *CallHandler) filterBusyUsers(calleeIDs []string, busyUsers []string) [
 // Helper Methods - Send Events to Clients
 // -----------------------------------------------------------------
 
-func (ch *CallHandler) notifyCallees(call *ActiveCall, callerID string) {
+func (ch *CallHandler) notifyCallees(call *ActiveGroupCall, callerID string) {
 	incomingEvent := model.CallIncomingEvent{
 		ConversationID: call.ConversationID,
 		CallerID:       callerID,
@@ -527,9 +680,11 @@ func (ch *CallHandler) notifyCallees(call *ActiveCall, callerID string) {
 		Payload: payload,
 	}
 
-	for _, calleeID := range call.CalleeIDs {
-		ch.sendToUser(calleeID, ev)
+	call.mu.RLock()
+	for userID := range call.Participants {
+		ch.sendToUser(userID, ev)
 	}
+	call.mu.RUnlock()
 }
 
 func (ch *CallHandler) notifyCallAccepted(callID, callerID, acceptedBy, roomName, token string) {
@@ -614,6 +769,42 @@ func (ch *CallHandler) notifyCallEnded(callID, userID, endedBy, reason string, d
 	}
 
 	ch.sendToUser(userID, ev)
+}
+
+// notifyParticipantJoined notifies a user that someone joined the group call
+func (ch *CallHandler) notifyParticipantJoined(callID, recipientID, joinedUserID string) {
+	joinedEvent := model.CallParticipantJoinedEvent{
+		CallID:    callID,
+		UserID:    joinedUserID,
+		Timestamp: time.Now().Unix(),
+	}
+
+	payload, _ := json.Marshal(joinedEvent)
+	ev := event.WsEvent{
+		Event:   event.EventCallParticipantJoined,
+		Payload: payload,
+	}
+
+	ch.sendToUser(recipientID, ev)
+}
+
+// notifyParticipantLeft notifies a user that someone left the group call
+func (ch *CallHandler) notifyParticipantLeft(callID, recipientID, leftUserID, reason string, duration int) {
+	leftEvent := model.CallParticipantLeftEvent{
+		CallID:    callID,
+		UserID:    leftUserID,
+		Reason:    reason,
+		Duration:  duration,
+		Timestamp: time.Now().Unix(),
+	}
+
+	payload, _ := json.Marshal(leftEvent)
+	ev := event.WsEvent{
+		Event:   event.EventCallParticipantLeft,
+		Payload: payload,
+	}
+
+	ch.sendToUser(recipientID, ev)
 }
 
 func (ch *CallHandler) notifyCallAnsweredElsewhere(callID, calleeID string) {

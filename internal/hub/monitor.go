@@ -129,10 +129,16 @@ func (ms *MonitorService) getCallStats() model.CallStats {
 	for _, call := range ms.hub.callHandler.activeCalls {
 		call.mu.RLock()
 
+		// Extract participant IDs from the Participants map
+		calleeIDs := make([]string, 0, len(call.Participants))
+		for userID := range call.Participants {
+			calleeIDs = append(calleeIDs, userID)
+		}
+
 		callInfo := model.CallInfo{
 			ConversationID: call.ConversationID,
 			CallerID:       call.CallerID,
-			CalleeIDs:      call.CalleeIDs,
+			CalleeIDs:      calleeIDs,
 			CallType:       call.CallType,
 			Status:         call.Status,
 			StartedAt:      call.CreatedAt.Format(time.RFC3339),

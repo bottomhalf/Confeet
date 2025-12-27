@@ -31,9 +31,9 @@ type Client struct {
 	egress  chan event.WsEvent
 
 	// User status for calls
-	status                 string // "online", "busy", "in_call", "away"
-	currentConversationID  string // conversationID if in a call
-	statusMu               sync.RWMutex
+	status                string // "online", "busy", "in_call", "away"
+	currentConversationID string // conversationID if in a call
+	statusMu              sync.RWMutex
 
 	// cancel or stop goroutine
 	cancel         context.CancelFunc
@@ -197,7 +197,7 @@ func (c *Client) WriteMessage() {
 
 			log.Println("message sent")
 		case <-ticker.C:
-			log.Println("Ping sent to client:", c.ID)
+			// log.Println("Ping sent to client:", c.ID)
 			if err := c.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeWait)); err != nil {
 				log.Println("write message error: ", err)
 				return
@@ -207,7 +207,7 @@ func (c *Client) WriteMessage() {
 }
 
 func (c *Client) pongHandler(pongMsg string) error {
-	log.Println("Pong received from client:", c.ID)
+	// log.Println("Pong received from client:", c.ID)
 	return c.conn.SetReadDeadline(time.Now().Add(pongWait))
 }
 
