@@ -53,7 +53,7 @@ var (
 	maxMessageSize     = 64 * 1024              // max inbound message size (64KB)
 	sendBufSize        = 256                    // per-connection outbound buffer size
 	workerPoolSize     = 16                     // number of workers to process inbound messages
-	sendTimeout        = 100 * time.Millisecond // timeout for enqueuing outbound messages
+	sendTimeout        = 2 * time.Second        // timeout for enqueuing outbound messages
 	kickOnFull         = true                   // when true, disconnect client when egress is full
 	registerTimeout    = 5 * time.Second        // timeout for client registration
 	unregisterTimeout  = 5 * time.Second        // timeout for client unregistration
