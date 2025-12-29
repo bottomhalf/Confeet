@@ -16,11 +16,12 @@ type ClientList map[*Client]bool
 
 // Client status constants
 const (
-	StatusOnline  = "online"
-	StatusBusy    = "busy"
-	StatusInCall  = "in_call"
-	StatusAway    = "away"
-	StatusOffline = "offline"
+	StatusOnline      = "online"
+	StatusBusy        = "busy"
+	StatusInCall      = "in_call"
+	StatusGettingCall = "ringing"
+	StatusAway        = "away"
+	StatusOffline     = "offline"
 )
 
 type Client struct {
@@ -306,6 +307,14 @@ func (c *Client) SetCallStatus(conversationID string) {
 	c.statusMu.Lock()
 	defer c.statusMu.Unlock()
 	c.status = StatusInCall
+	c.currentConversationID = conversationID
+}
+
+// SetCallStatus marks the client as in a call with the given conversation
+func (c *Client) SetGettingCallStatus(conversationID string) {
+	c.statusMu.Lock()
+	defer c.statusMu.Unlock()
+	c.status = StatusGettingCall
 	c.currentConversationID = conversationID
 }
 

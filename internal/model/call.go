@@ -158,8 +158,8 @@ type CallErrorEvent struct {
 // CallParticipantJoinedEvent is sent to other participants when someone joins the call
 type CallParticipantJoinedEvent struct {
 	CallID    string `json:"callId"`
-	UserID    string `json:"userId"`    // User who joined
-	UserName  string `json:"userName"`  // Display name (optional)
+	UserID    string `json:"userId"`   // User who joined
+	UserName  string `json:"userName"` // Display name (optional)
 	Timestamp int64  `json:"timestamp"`
 }
 

@@ -68,7 +68,7 @@ func (ch *CallHandler) SetHub(hub *Hub) {
 func (ch *CallHandler) HandleCallEvent(ev event.WsEvent, c *Client) {
 	switch ev.Event {
 	case event.EventCallInitiate:
-		ch.handleCallInitiate(ev, c)
+		ch.handleCallInitiate(ev, c, false)
 	case event.EventCallAccept:
 		ch.handleCallAccept(ev, c)
 	case event.EventCallReject:
@@ -79,13 +79,15 @@ func (ch *CallHandler) HandleCallEvent(ev event.WsEvent, c *Client) {
 		ch.handleCallTimeout(ev, c)
 	case event.EventCallEnd:
 		ch.handleCallEnd(ev, c)
+	case event.EventCallStarted:
+		ch.handleCallInitiate(ev, c, true)
 	default:
 		log.Printf("unknown call event type: %s", ev.Event)
 	}
 }
 
 // handleCallInitiate processes a call initiation request
-func (ch *CallHandler) handleCallInitiate(ev event.WsEvent, c *Client) {
+func (ch *CallHandler) handleCallInitiate(ev event.WsEvent, c *Client, isJoinRequest bool) {
 	var payload model.CallInitiatePayload
 	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
 		log.Printf("failed to unmarshal call initiate payload: %v", err)
@@ -160,7 +162,7 @@ func (ch *CallHandler) handleCallInitiate(ev event.WsEvent, c *Client) {
 	for _, calleeID := range payload.CalleeIDs {
 		participants[calleeID] = &CallParticipant{
 			UserID: calleeID,
-			Status: ParticipantStatusRinging,
+			Status: ParticipantStatusAccepted,
 		}
 	}
 
@@ -182,13 +184,15 @@ func (ch *CallHandler) handleCallInitiate(ev event.WsEvent, c *Client) {
 
 	// Mark all callees as having incoming call
 	for _, calleeID := range payload.CalleeIDs {
-		ch.setUserBusy(calleeID, payload.ConversationID)
+		if calleeID != c.userId {
+			ch.setUserHavingCall(calleeID, payload.ConversationID)
+		}
 	}
 
 	log.Printf("Call initiated: %s from %s to %v (type: %s, timeout: %ds)",
 		payload.ConversationID, c.userId, payload.CalleeIDs, payload.CallType, timeout)
 	// Send incoming call notification to all callees
-	ch.notifyCallees(activeCall, c.userId)
+	ch.notifyCallees(activeCall, c.userId, isJoinRequest)
 }
 
 // handleCallAccept processes a call acceptance
@@ -605,6 +609,17 @@ func (ch *CallHandler) setUserBusy(userID string, conversationID string) {
 	}
 }
 
+// setUserBusy marks a user as in a call using their Client status
+func (ch *CallHandler) setUserHavingCall(userID string, conversationID string) {
+	ch.hub.onlineUsersMu.RLock()
+	client, online := ch.hub.onlineUsers[userID]
+	ch.hub.onlineUsersMu.RUnlock()
+
+	if online {
+		client.SetGettingCallStatus(conversationID)
+	}
+}
+
 // clearUserBusy clears a user's call status back to online
 func (ch *CallHandler) clearUserBusy(userID string) {
 	ch.hub.onlineUsersMu.RLock()
@@ -664,7 +679,7 @@ func (ch *CallHandler) filterBusyUsers(calleeIDs []string, busyUsers []string) [
 // Helper Methods - Send Events to Clients
 // -----------------------------------------------------------------
 
-func (ch *CallHandler) notifyCallees(call *ActiveGroupCall, callerID string) {
+func (ch *CallHandler) notifyCallees(call *ActiveGroupCall, callerID string, isJoinRequest bool) {
 	incomingEvent := model.CallIncomingEvent{
 		ConversationID: call.ConversationID,
 		CallerID:       callerID,
@@ -674,9 +689,14 @@ func (ch *CallHandler) notifyCallees(call *ActiveGroupCall, callerID string) {
 		Timestamp: time.Now().Unix(),
 	}
 
+	callEventName := event.EventCallIncoming
+	if isJoinRequest {
+		callEventName = event.EventCallJoiningRequest
+	}
+
 	payload, _ := json.Marshal(incomingEvent)
 	ev := event.WsEvent{
-		Event:   event.EventCallIncoming,
+		Event:   callEventName,
 		Payload: payload,
 	}
 
@@ -951,6 +971,7 @@ func IsCallEvent(eventType string) bool {
 		event.EventCallReject,
 		event.EventCallCancel,
 		event.EventCallTimeout,
+		event.EventCallStarted,
 		event.EventCallEnd:
 		return true
 	default:

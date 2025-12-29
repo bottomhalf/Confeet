@@ -19,12 +19,18 @@ const (
 
 	// EventCallEnd - Either party ends an ongoing call
 	EventCallEnd = "call:end"
+
+	// EventCallStarted - Notify that a call has started (used for group calls)
+	EventCallStarted = "call:started"
 )
 
 // Call Event Types - Server to Client
 const (
 	// EventCallIncoming - Notify callee of incoming call
 	EventCallIncoming = "call:incoming"
+
+	// EventCallIncoming - Notify callee of incoming call
+	EventCallJoiningRequest = "call:joining_request"
 
 	// EventCallAccepted - Notify caller that callee accepted
 	EventCallAccepted = "call:accepted"
@@ -65,27 +71,27 @@ const (
 
 // Call Status Constants
 const (
-	CallStatusInitiated  = 1
-	CallStatusRinging    = 2
-	CallStatusAccepted   = 3
-	CallStatusRejected   = 4
-	CallStatusCancelled  = 5
-	CallStatusTimeout    = 6
-	CallStatusEnded      = 7
-	CallStatusBusy       = 8
-	CallStatusFailed     = 9
-	CallStatusMissed     = 10
+	CallStatusInitiated = 1
+	CallStatusRinging   = 2
+	CallStatusAccepted  = 3
+	CallStatusRejected  = 4
+	CallStatusCancelled = 5
+	CallStatusTimeout   = 6
+	CallStatusEnded     = 7
+	CallStatusBusy      = 8
+	CallStatusFailed    = 9
+	CallStatusMissed    = 10
 )
 
 // Call End Reasons
 const (
-	CallEndReasonNormal     = "normal"      // Normal hangup
-	CallEndReasonBusy       = "busy"        // Callee was busy
-	CallEndReasonTimeout    = "timeout"     // No answer
-	CallEndReasonRejected   = "rejected"    // Callee rejected
-	CallEndReasonCancelled  = "cancelled"   // Caller cancelled
-	CallEndReasonError      = "error"       // Technical error
-	CallEndReasonNoNetwork  = "no_network"  // Network issue
+	CallEndReasonNormal    = "normal"     // Normal hangup
+	CallEndReasonBusy      = "busy"       // Callee was busy
+	CallEndReasonTimeout   = "timeout"    // No answer
+	CallEndReasonRejected  = "rejected"   // Callee rejected
+	CallEndReasonCancelled = "cancelled"  // Caller cancelled
+	CallEndReasonError     = "error"      // Technical error
+	CallEndReasonNoNetwork = "no_network" // Network issue
 )
 
 // Call Configuration
