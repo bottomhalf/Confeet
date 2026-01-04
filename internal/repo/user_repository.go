@@ -12,39 +12,32 @@ import (
 
 type UserRepository interface {
 	// Define methods for user repository here
-	insertMessage(msg model.Message) error
+	GetUser(id string) (*model.User, error)
 }
 
 type userRepository struct {
 	// Add fields for dependencies here
 	con       *mongo.Database
-	mongoRepo *db.Repository[model.Message]
+	mongoRepo *db.Repository[model.User]
 }
 
-func NewUserRepository(con *mongo.Database, repo *db.Repository[model.Message]) UserRepository {
+func NewUserRepository(con *mongo.Database, repo *db.Repository[model.User]) UserRepository {
 	return &userRepository{
 		con:       con,
 		mongoRepo: repo,
 	}
 }
 
-func (r *userRepository) insertMessage(msg model.Message) error {
+func (r *userRepository) GetUser(id string) (*model.User, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
 
-	result, err := r.mongoRepo.Create(ctx, msg)
+	result, err := r.mongoRepo.FindByUserID(ctx, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	fmt.Println("Inserted ID:", result.InsertedID)
+	fmt.Println("Client found with ID:", result.ID)
 
-	select {
-	case <-ctx.Done():
-		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("insert message timeout: %w", ctx.Err())
-		}
-	}
-
-	return nil
+	return result, nil
 }

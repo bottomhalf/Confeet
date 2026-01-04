@@ -14,6 +14,9 @@ const (
 	// EventCallCancel - Caller cancels before callee answers
 	EventCallCancel = "call:cancel"
 
+	// EventCallDismiss - Caller cancels before callee answers
+	EventCallDismiss = "call:dismiss"
+
 	// EventCallTimeout - Callee didn't answer within timeout period
 	EventCallTimeout = "call:timeout"
 
@@ -37,6 +40,9 @@ const (
 
 	// EventCallRejected - Notify caller that callee rejected
 	EventCallRejected = "call:rejected"
+
+	// EventCallDismissed - Caller cancels before callee answers
+	EventCallDismissed = "call:dismissed"
 
 	// EventCallCancelled - Notify callee that caller cancelled
 	EventCallCancelled = "call:cancelled"

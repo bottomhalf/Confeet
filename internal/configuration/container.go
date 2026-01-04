@@ -47,17 +47,18 @@ func BuildContainer() (*Container, error) {
 	}
 
 	mongoRepo := db.NewRepository[model.Message](con, config.ChatDatabase.MessagesCollection)
+	userMongoRepo := db.NewRepository[model.User](con, config.ChatDatabase.UsersCollection)
 
 	logger, _ := zap.NewProduction()
 
 	messageRepo := repo.NewMessageRepository(con, mongoRepo, logger)
 	conversationRepo := repo.NewConversationRepository(con, logger)
-	userRepo := repo.NewUserRepository(con, mongoRepo)
+	userRepo := repo.NewUserRepository(con, userMongoRepo)
 	userService := service.NewUserService(userRepo, messageRepo)
 	userHandler := handler.NewUserHandler(userService)
 
 	// Create Hub with repositories
-	Hub := hub.NewHub(messageRepo, conversationRepo)
+	Hub := hub.NewHub(messageRepo, conversationRepo, userRepo)
 
 	return &Container{
 		UserHandler: userHandler,

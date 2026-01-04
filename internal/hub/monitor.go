@@ -20,6 +20,7 @@ func (ms *MonitorService) GetStats() model.MonitorResponse {
 	connectionStats := ms.getConnectionStats()
 	roomStats := ms.getRoomStats()
 	callStats := ms.getCallStats()
+	roomParticipantsStats := ms.getCurrentRoomClientsDetail()
 	clients := ms.getClientList()
 	statusCount := ms.getStatusCount()
 
@@ -30,12 +31,13 @@ func (ms *MonitorService) GetStats() model.MonitorResponse {
 	}
 
 	return model.MonitorResponse{
-		Status:      status,
-		Connections: connectionStats,
-		Rooms:       roomStats,
-		Calls:       callStats,
-		Clients:     clients,
-		StatusCount: statusCount,
+		Status:                status,
+		Connections:           connectionStats,
+		RoomParticipantsStats: roomParticipantsStats,
+		Rooms:                 roomStats,
+		Calls:                 callStats,
+		Clients:               clients,
+		StatusCount:           statusCount,
 	}
 }
 
@@ -113,6 +115,20 @@ func (ms *MonitorService) getRoomStats() model.RoomStats {
 	return stats
 }
 
+// getClientList returns list of all connected clients
+func (ms *MonitorService) getCurrentRoomClientsDetail() []*model.ActiveGroupCall {
+	ms.hub.callHandler.activeCallsMu.RLock()
+	defer ms.hub.callHandler.activeCallsMu.RUnlock()
+
+	call := make([]*model.ActiveGroupCall, 0, len(ms.hub.callHandler.activeCalls))
+
+	for _, activeCall := range ms.hub.callHandler.activeCalls {
+		call = append(call, activeCall)
+	}
+
+	return call
+}
+
 // getCallStats returns active call statistics
 func (ms *MonitorService) getCallStats() model.CallStats {
 	stats := model.CallStats{
@@ -127,7 +143,7 @@ func (ms *MonitorService) getCallStats() model.CallStats {
 	defer ms.hub.callHandler.activeCallsMu.RUnlock()
 
 	for _, call := range ms.hub.callHandler.activeCalls {
-		call.mu.RLock()
+		call.Mu.RLock()
 
 		// Extract participant IDs from the Participants map
 		calleeIDs := make([]string, 0, len(call.Participants))
@@ -147,7 +163,7 @@ func (ms *MonitorService) getCallStats() model.CallStats {
 		stats.CallDetails = append(stats.CallDetails, callInfo)
 		stats.TotalActiveCalls++
 
-		call.mu.RUnlock()
+		call.Mu.RUnlock()
 	}
 
 	return stats

@@ -6,12 +6,13 @@ package model
 
 // MonitorResponse is the main response for the monitor API
 type MonitorResponse struct {
-	Status      string             `json:"status"`      // "healthy", "degraded", "unhealthy"
-	Connections ConnectionStats    `json:"connections"` // Client connection stats
-	Rooms       RoomStats          `json:"rooms"`       // Room/conversation stats
-	Calls       CallStats          `json:"calls"`       // Active call stats
-	Clients     []ClientInfo       `json:"clients"`     // List of connected clients
-	StatusCount map[string]int     `json:"statusCount"` // Count by status (online, busy, in_call, away)
+	Status                string             `json:"status"`                // "healthy", "degraded", "unhealthy"
+	Connections           ConnectionStats    `json:"connections"`           // Client connection stats
+	RoomParticipantsStats []*ActiveGroupCall `json:"roomParticipantsStats"` // Current room participants detail
+	Rooms                 RoomStats          `json:"rooms"`                 // Room/conversation stats
+	Calls                 CallStats          `json:"calls"`                 // Active call stats
+	Clients               []ClientInfo       `json:"clients"`               // List of connected clients
+	StatusCount           map[string]int     `json:"statusCount"`           // Count by status (online, busy, in_call, away)
 }
 
 // ConnectionStats holds connection-related statistics
@@ -25,17 +26,17 @@ type ConnectionStats struct {
 
 // RoomStats holds room/conversation statistics
 type RoomStats struct {
-	TotalRooms   int        `json:"totalRooms"`   // Total rooms in cache
-	ActiveRooms  int        `json:"activeRooms"`  // Rooms with at least one online member
-	RoomDetails  []RoomInfo `json:"roomDetails"`  // Details of each room
+	TotalRooms  int        `json:"totalRooms"`  // Total rooms in cache
+	ActiveRooms int        `json:"activeRooms"` // Rooms with at least one online member
+	RoomDetails []RoomInfo `json:"roomDetails"` // Details of each room
 }
 
 // RoomInfo contains information about a single room
 type RoomInfo struct {
 	ConversationID string   `json:"conversationId"`
-	TotalMembers   int      `json:"totalMembers"`   // Total members in room
-	OnlineMembers  int      `json:"onlineMembers"`  // Currently online members
-	MemberIDs      []string `json:"memberIds"`      // List of member user IDs
+	TotalMembers   int      `json:"totalMembers"`  // Total members in room
+	OnlineMembers  int      `json:"onlineMembers"` // Currently online members
+	MemberIDs      []string `json:"memberIds"`     // List of member user IDs
 }
 
 // CallStats holds active call statistics

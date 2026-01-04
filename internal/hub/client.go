@@ -302,8 +302,8 @@ func (c *Client) GetCurrentConversationID() string {
 	return c.currentConversationID
 }
 
-// SetCallStatus marks the client as in a call with the given conversation
-func (c *Client) SetCallStatus(conversationID string) {
+// SetCallStatusAsInCall marks the client as in a call with the given conversation
+func (c *Client) SetCallStatusAsInCall(conversationID string) {
 	c.statusMu.Lock()
 	defer c.statusMu.Unlock()
 	c.status = StatusInCall

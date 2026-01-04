@@ -9,6 +9,7 @@ type MongoConfig struct {
 	Uri                string `json:"uri"`
 	Database           string `json:"database"`
 	MessagesCollection string `json:"messagesCollection"`
+	UsersCollection    string `json:"usersCollection"`
 	SessionsCollection string `json:"sessionsCollection"`
 	ProductsCollection string `json:"productsCollection"`
 	SocketRoute        string `json:"socketRoute"`

@@ -89,10 +89,11 @@ type Hub struct {
 
 	// Repositories
 	messageRepo      repo.MessageRepository
+	userRepository   repo.UserRepository
 	conversationRepo repo.ConversationRepository
 }
 
-func NewHub(messageRepo repo.MessageRepository, conversationRepo repo.ConversationRepository) *Hub {
+func NewHub(messageRepo repo.MessageRepository, conversationRepo repo.ConversationRepository, userRepository repo.UserRepository) *Hub {
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &Hub{
 		onlineUsers:      make(map[string]*Client),
@@ -101,6 +102,7 @@ func NewHub(messageRepo repo.MessageRepository, conversationRepo repo.Conversati
 		broadcast:        make(chan event.WsEvent, 1024),
 		inbound:          make(chan inboundMessage, 4096),
 		messageRepo:      messageRepo,
+		userRepository:   userRepository,
 		conversationRepo: conversationRepo,
 		ctx:              ctx,
 		cancel:           cancel,

@@ -87,6 +87,16 @@ func (r *Repository[T]) FindByID(ctx context.Context, id string) (*T, error) {
 	return &result, nil
 }
 
+// FindByUserID finds a document by its unique user_id field
+func (r *Repository[T]) FindByUserID(ctx context.Context, userID string) (*T, error) {
+	var result T
+	err := r.collection.FindOne(ctx, bson.M{"user_id": userID}).Decode(&result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // FindOne finds a single document matching the filter
 func (r *Repository[T]) FindOne(ctx context.Context, filter bson.M) (*T, error) {
 	var result T

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"sync"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -21,15 +22,6 @@ type Call struct {
 	EndReason      string             `json:"endReason,omitempty" bson:"endReason"` // Why call ended
 	CreatedAt      time.Time          `json:"createdAt" bson:"createdAt"`           // When call was initiated
 	UpdatedAt      time.Time          `json:"updatedAt" bson:"updatedAt"`           // Last update time
-}
-
-// CallParticipant tracks individual participant status in a call
-type CallParticipant struct {
-	UserID    string     `json:"userId" bson:"userId"`
-	Status    int        `json:"status" bson:"status"`       // Participant-specific status
-	JoinedAt  *time.Time `json:"joinedAt" bson:"joinedAt"`   // When they joined
-	LeftAt    *time.Time `json:"leftAt" bson:"leftAt"`       // When they left
-	EndReason string     `json:"endReason" bson:"endReason"` // Why they left
 }
 
 // -----------------------------------------------------------------
@@ -57,6 +49,13 @@ type CallRejectPayload struct {
 	Reason         string `json:"reason,omitempty"` // Optional rejection reason
 }
 
+// CallDismissPayload is sent by callee to reject a call
+type CallDismissPayload struct {
+	ConversationID string `json:"conversationId"`
+	CallerID       string `json:"callerId"`
+	Reason         string `json:"reason,omitempty"` // Optional rejection reason
+}
+
 // CallCancelPayload is sent by caller to cancel before answer
 type CallCancelPayload struct {
 	ConversationID string   `json:"conversationId"`
@@ -79,15 +78,54 @@ type CallEndPayload struct {
 // WebSocket Event Payloads - Server to Client
 // -----------------------------------------------------------------
 
+// ParticipantStatus tracks individual callee state in a group call
+type ParticipantStatus int
+
+const (
+	ParticipantStatusRinging   ParticipantStatus = 1
+	ParticipantStatusAccepted  ParticipantStatus = 2
+	ParticipantStatusRejected  ParticipantStatus = 3
+	ParticipantStatusTimeout   ParticipantStatus = 4
+	ParticipantStatusLeft      ParticipantStatus = 5
+	ParticipantStatusDismissed ParticipantStatus = 6
+)
+
+// CallParticipant tracks state of each callee in a group call
+type CallParticipant struct {
+	UserID       string            `json:"userId"`
+	Name         string            `json:"name"`   // Display name
+	Avatar       string            `json:"avatar"` // Avatar URL
+	Email        string            `json:"email"`  // Email address
+	Status       ParticipantStatus `json:"status"`
+	JoinedAt     *time.Time        `json:"joinedAt"`     // When they accepted/joined
+	LeftAt       *time.Time        `json:"leftAt"`       // When they left/rejected
+	EndReason    string            `json:"endReason"`    // "rejected", "timeout", "left", etc.
+	LiveKitToken string            `json:"liveKitToken"` // Their individual LiveKit token
+}
+
+// ActiveGroupCall tracks the state of an ongoing call (1-to-1 or group)
+type ActiveGroupCall struct {
+	ConversationID string                      `json:"conversationId"`
+	CallerID       string                      `json:"callerId"`
+	CallType       string                      `json:"callType"`
+	Status         int                         `json:"status"` // Overall call status
+	Timeout        int                         `json:"timeout"`
+	CreatedAt      time.Time                   `json:"createdAt"`
+	Participants   map[string]*CallParticipant `json:"participants"` // Maps userID to their participation state
+	RoomName       string                      `json:"roomName"`     // LiveKit room name
+	Mu             sync.RWMutex
+}
+
 // CallIncomingEvent is sent to callee(s) when receiving a call
 type CallIncomingEvent struct {
-	ConversationID string `json:"conversationId"`
-	CallerID       string `json:"callerId"`
-	CallerName     string `json:"callerName,omitempty"`   // Display name
-	CallerAvatar   string `json:"callerAvatar,omitempty"` // Avatar URL
-	CallType       string `json:"callType"`               // "audio" or "video"
-	Timeout        int    `json:"timeout"`                // Seconds until timeout
-	Timestamp      int64  `json:"timestamp"`              // Unix timestamp
+	ConversationID string                      `json:"conversationId"`
+	CallerID       string                      `json:"callerId"`
+	CallerName     string                      `json:"callerName,omitempty"`   // Display name
+	CallerAvatar   string                      `json:"callerAvatar,omitempty"` // Avatar URL
+	CallType       string                      `json:"callType"`               // "audio" or "video"
+	Participants   map[string]*CallParticipant `json:"participants"`           // Participant IDs
+	Timeout        int                         `json:"timeout"`                // Seconds until timeout
+	Timestamp      int64                       `json:"timestamp"`              // Unix timestamp
 }
 
 // CallAcceptedEvent is sent to caller when callee accepts
@@ -105,6 +143,14 @@ type CallRejectedEvent struct {
 	RejectedBy string `json:"rejectedBy"`
 	Reason     string `json:"reason,omitempty"`
 	Timestamp  int64  `json:"timestamp"`
+}
+
+// CallDismissedEvent is sent to caller when callee rejects
+type CallDismissedEvent struct {
+	CallID      string `json:"callId"`
+	DismissedBy string `json:"dismissedBy"`
+	Reason      string `json:"reason,omitempty"`
+	Timestamp   int64  `json:"timestamp"`
 }
 
 // CallCancelledEvent is sent to callee when caller cancels
@@ -170,22 +216,4 @@ type CallParticipantLeftEvent struct {
 	Reason    string `json:"reason,omitempty"` // Why they left
 	Duration  int    `json:"duration"`         // How long they were in the call
 	Timestamp int64  `json:"timestamp"`
-}
-
-// -----------------------------------------------------------------
-// LiveKit Integration
-// -----------------------------------------------------------------
-
-// LiveKitRoomInfo contains LiveKit room details for joining a call
-type LiveKitRoomInfo struct {
-	RoomName string `json:"roomName"`
-	Token    string `json:"token"` // JWT token for participant
-	URL      string `json:"url"`   // LiveKit server URL
-}
-
-// CallJoinInfo is sent to participants when they should join the call
-type CallJoinInfo struct {
-	CallID   string          `json:"callId"`
-	CallType string          `json:"callType"`
-	LiveKit  LiveKitRoomInfo `json:"livekit"`
 }
