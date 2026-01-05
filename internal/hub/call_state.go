@@ -1,9 +1,15 @@
 package hub
 
 import (
+	"Confeet/internal/event"
 	"Confeet/internal/model"
+	"Confeet/internal/service"
 	"log"
 	"time"
+)
+
+var (
+	CallingDuraation = 30 * time.Second
 )
 
 // -----------------------------------------------------------------
@@ -14,6 +20,51 @@ func (ch *CallHandler) registerCall(call *model.ActiveGroupCall) {
 	ch.activeCallsMu.Lock()
 	ch.activeCalls[call.ConversationID] = call
 	ch.activeCallsMu.Unlock()
+}
+
+func (ch *CallHandler) startCallTimeoutWatcher(activeCall *model.ActiveGroupCall) {
+	time.Sleep(CallingDuraation * time.Second)
+
+	call := ch.getActiveCall(activeCall.ConversationID)
+	if call == nil {
+		return
+	}
+
+	call.Mu.Lock()
+
+	// Find participants still in ringing state
+	var timeoutParticipants []string
+	for userID, participant := range call.Participants {
+		if participant.Status == model.ParticipantStatusRinging {
+			now := time.Now()
+			participant.Status = model.ParticipantStatusTimeout
+			participant.LeftAt = &now
+			participant.EndReason = "timeout"
+			timeoutParticipants = append(timeoutParticipants, userID)
+		}
+	}
+
+	ringingCount, acceptedCount := ch.countParticipantStates(call)
+	otherParticipants := service.WhereMap(call.Participants, func(k string, p *model.CallParticipant) bool {
+		return k != activeCall.CallerID
+	})
+
+	is1to1Call := len(otherParticipants) == 1
+
+	call.Mu.Unlock()
+
+	// Clear busy status for timed out users
+	for _, userID := range timeoutParticipants {
+		ch.clearUserBusy(userID, call.ConversationID)
+		// Notify each timed out user
+		ch.notifyCallTimedOut(activeCall.ConversationID, userID)
+	}
+
+	// End call if no one accepted and no one still ringing
+	if is1to1Call || (ringingCount == 0 && acceptedCount == 0) {
+		ch.notifyCallTimedOut(activeCall.ConversationID, activeCall.CallerID)
+		ch.endCall(call, event.CallEndReasonTimeout)
+	}
 }
 
 func (ch *CallHandler) getActiveCall(conversationID string) *model.ActiveGroupCall {
@@ -29,12 +80,12 @@ func (ch *CallHandler) endCall(call *model.ActiveGroupCall, reason string) {
 	ch.activeCallsMu.Unlock()
 
 	// Clear caller busy status
-	ch.clearUserBusy(call.CallerID)
+	ch.clearUserBusy(call.CallerID, call.ConversationID)
 
 	// Clear all participants busy status
 	call.Mu.RLock()
 	for userID := range call.Participants {
-		ch.clearUserBusy(userID)
+		ch.clearUserBusy(userID, call.ConversationID)
 	}
 	call.Mu.RUnlock()
 	log.Printf("Call %s ended with reason: %s", call.ConversationID, reason)
@@ -101,12 +152,12 @@ func (ch *CallHandler) setUserHavingCall(userID string, conversationID string) {
 }
 
 // clearUserBusy clears a user's call status back to online
-func (ch *CallHandler) clearUserBusy(userID string) {
+func (ch *CallHandler) clearUserBusy(userID string, conversationID string) {
 	ch.hub.onlineUsersMu.RLock()
 	client, online := ch.hub.onlineUsers[userID]
 	ch.hub.onlineUsersMu.RUnlock()
 
-	if online {
+	if online && client.GetCurrentConversationID() == conversationID {
 		client.ClearCallStatus()
 	}
 }

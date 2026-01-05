@@ -517,7 +517,13 @@ func (h *Hub) Stop() {
 // removeClient removes the client from online users (does NOT remove from rooms)
 func (h *Hub) removeClient(c *Client) {
 	h.onlineUsersMu.Lock()
-	delete(h.onlineUsers, c.userId)
+	// Only remove if it's the same client (in case of reconnects)
+	if existing, ok := h.onlineUsers[c.userId]; ok && existing.ID == c.ID {
+		delete(h.onlineUsers, c.userId)
+		log.Printf("REMOVED: client %s (user: %s) - count now: %d", c.ID, c.userId, len(h.onlineUsers))
+	} else {
+		log.Printf("SKIP REMOVE: client %s (user: %s) - different client active", c.ID, c.userId)
+	}
 	h.onlineUsersMu.Unlock()
 
 	// Close the client connection

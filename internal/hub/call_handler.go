@@ -145,6 +145,10 @@ func (ch *CallHandler) handleCallInitiate(ev event.WsEvent, c *Client, isJoinReq
 
 	// Register call and mark caller as busy
 	ch.registerCall(activeCall)
+
+	// Start server timer go routine to handle participant call status
+	go ch.startCallTimeoutWatcher(activeCall)
+
 	ch.setUserBusy(c.userId, payload.ConversationID)
 
 	// Mark all callees as having incoming call
