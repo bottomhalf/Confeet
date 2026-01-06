@@ -143,6 +143,9 @@ func NewHub(messageRepo repo.MessageRepository, conversationRepo repo.Conversati
 	// start TTL eviction goroutine
 	go h.evictExpiredRooms()
 
+	// start heartbeat checker goroutine to remove stale clients
+	go h.checkStaleClients()
+
 	return h
 }
 
@@ -257,6 +260,17 @@ func (h *Hub) handleEvent(ev event.WsEvent, c *Client) {
 
 		ev.Event = event.EventTyping
 		h.publishToRoom(ev, typing.ConversationID)
+
+	case event.HeartBeat:
+		// Client is proving it's alive - update lastSeen timestamp
+		var ping model.PingIndicator
+		if err := json.Unmarshal(ev.Payload, &ping); err != nil {
+			log.Printf("failed to unmarshal ping indicator: %v", err)
+			return
+		}
+		log.Printf("Ping from: %s", ping.UserID)
+		c.UpdateLastSeen()
+		// No response needed - this is a one-way heartbeat
 
 	default:
 		log.Printf("unknown event type: %s", ev.Event)
@@ -374,6 +388,56 @@ func (h *Hub) evictExpiredRooms() {
 				log.Printf("evicted %d expired rooms from cache", evicted)
 			}
 		}
+	}
+}
+
+// checkStaleClients periodically checks for clients that haven't sent heartbeat
+// and removes them from the online users list
+func (h *Hub) checkStaleClients() {
+	ticker := time.NewTicker(heartbeatCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-h.ctx.Done():
+			return
+		case <-ticker.C:
+			h.removeStaleClients()
+		}
+	}
+}
+
+// removeStaleClients finds and removes clients that haven't sent heartbeat within timeout
+func (h *Hub) removeStaleClients() {
+	// Collect stale clients while holding read lock
+	h.onlineUsersMu.RLock()
+	staleClients := make([]*Client, 0)
+	for _, client := range h.onlineUsers {
+		if client.IsStale(heartbeatTimeout) {
+			staleClients = append(staleClients, client)
+		}
+	}
+	h.onlineUsersMu.RUnlock()
+
+	// Remove stale clients (this will trigger unregister flow)
+	for _, client := range staleClients {
+		lastSeen := client.GetLastSeen()
+		log.Printf("HEARTBEAT TIMEOUT: client %s (user: %s) last seen %v ago - removing",
+			client.ID, client.userId, time.Since(lastSeen).Round(time.Second))
+
+		// Send to unregister channel to properly clean up
+		select {
+		case h.unregister <- client:
+			// queued for removal
+		case <-time.After(unregisterTimeout):
+			log.Printf("failed to queue stale client %s for removal: timeout", client.ID)
+			// Force close the connection
+			client.Close()
+		}
+	}
+
+	if len(staleClients) > 0 {
+		log.Printf("HEARTBEAT CHECK: removed %d stale clients", len(staleClients))
 	}
 }
 

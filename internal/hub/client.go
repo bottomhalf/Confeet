@@ -36,6 +36,10 @@ type Client struct {
 	currentConversationID string // conversationID if in a call
 	statusMu              sync.RWMutex
 
+	// Heartbeat tracking - client must send heartbeat to prove it's alive
+	lastSeen   time.Time
+	lastSeenMu sync.RWMutex
+
 	// cancel or stop goroutine
 	cancel         context.CancelFunc
 	ctx            context.Context
@@ -49,8 +53,6 @@ type Client struct {
 var (
 	// tuning parameters
 	writeWait          = 10 * time.Second       // time allowed to write a message to the peer
-	pongWait           = 20 * time.Second       // time allowed to read the next pong message from the peer
-	pingInterval       = (pongWait * 9) / 10    // send pings to peer with this period
 	maxMessageSize     = 64 * 1024              // max inbound message size (64KB)
 	sendBufSize        = 256                    // per-connection outbound buffer size
 	workerPoolSize     = 16                     // number of workers to process inbound messages
@@ -59,6 +61,10 @@ var (
 	registerTimeout    = 5 * time.Second        // timeout for client registration
 	unregisterTimeout  = 5 * time.Second        // timeout for client unregistration
 	inboundSendTimeout = 500 * time.Millisecond // timeout for sending to inbound channel
+
+	// Heartbeat configuration - client must send heartbeat within this interval
+	heartbeatTimeout       = 60 * time.Second // max time to wait for client heartbeat
+	heartbeatCheckInterval = 15 * time.Second // how often server checks for stale clients
 )
 
 // RegisterClient creates a new client with a single WebSocket connection
@@ -73,6 +79,7 @@ func RegisterClient(userId string, conn *websocket.Conn, h *Hub) *Client {
 		manager:        h,
 		egress:         make(chan event.WsEvent, sendBufSize),
 		status:         StatusOnline,
+		lastSeen:       time.Now(), // Initialize lastSeen to registration time
 		cancel:         cancel,
 		ctx:            ctx,
 		once:           sync.Once{},
@@ -107,8 +114,7 @@ func (c *Client) ReadMessages() {
 	}()
 
 	c.conn.SetReadLimit(int64(maxMessageSize))
-	c.conn.SetReadDeadline(time.Now().Add(pongWait))
-	c.conn.SetPongHandler(c.pongHandler)
+	// No read deadline - heartbeat checker goroutine handles stale clients
 
 	for {
 		select {
@@ -162,10 +168,7 @@ func (c *Client) ReadMessages() {
 }
 
 func (c *Client) WriteMessage() {
-	ticker := time.NewTicker(pingInterval)
-
 	defer func() {
-		ticker.Stop()
 		c.Close()
 		_ = c.conn.Close()
 
@@ -197,19 +200,29 @@ func (c *Client) WriteMessage() {
 			}
 
 			log.Println("message sent")
-		case <-ticker.C:
-			// log.Println("Ping sent to client:", c.ID)
-			if err := c.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeWait)); err != nil {
-				log.Println("write message error: ", err)
-				return
-			}
 		}
 	}
 }
 
-func (c *Client) pongHandler(pongMsg string) error {
-	// log.Println("Pong received from client:", c.ID)
-	return c.conn.SetReadDeadline(time.Now().Add(pongWait))
+// UpdateLastSeen updates the lastSeen timestamp (called when heartbeat received)
+func (c *Client) UpdateLastSeen() {
+	c.lastSeenMu.Lock()
+	c.lastSeen = time.Now()
+	c.lastSeenMu.Unlock()
+}
+
+// GetLastSeen returns the last seen timestamp
+func (c *Client) GetLastSeen() time.Time {
+	c.lastSeenMu.RLock()
+	defer c.lastSeenMu.RUnlock()
+	return c.lastSeen
+}
+
+// IsStale returns true if client hasn't sent heartbeat within timeout
+func (c *Client) IsStale(timeout time.Duration) bool {
+	c.lastSeenMu.RLock()
+	defer c.lastSeenMu.RUnlock()
+	return time.Since(c.lastSeen) > timeout
 }
 
 func (c *Client) Send(ev event.WsEvent) {

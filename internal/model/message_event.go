@@ -25,3 +25,8 @@ type TypingIndicator struct {
 	Type           string `json:"type"` // "start" or "stop"
 	IsTyping       bool   `json:"isTyping"`
 }
+
+// TypingIndicator - for typing status
+type PingIndicator struct {
+	UserID string `json:"userId"`
+}
