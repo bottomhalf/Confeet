@@ -266,7 +266,7 @@ func (ch *CallHandler) handleCallReject(ev event.WsEvent, c *Client) {
 	activeCall := ch.getActiveCall(payload.ConversationID)
 	if activeCall == nil {
 		// Call might have already ended, just clear user status
-		ch.clearUserBusy(c.userId)
+		ch.clearUserBusy(c.userId, payload.ConversationID)
 		return
 	}
 
@@ -294,7 +294,7 @@ func (ch *CallHandler) handleCallReject(ev event.WsEvent, c *Client) {
 	log.Printf("Call rejected: %s by %s (reason: %s)", payload.ConversationID, c.userId, payload.Reason)
 
 	// Clear this user's busy status
-	ch.clearUserBusy(c.userId)
+	ch.clearUserBusy(c.userId, payload.ConversationID)
 
 	// Notify caller about rejection
 	ch.notifyCallRejected(payload.ConversationID, activeCall.CallerID, c.userId, payload.Reason)
@@ -324,7 +324,7 @@ func (ch *CallHandler) handleCallDismiss(ev event.WsEvent, c *Client) {
 	activeCall := ch.getActiveCall(payload.ConversationID)
 	if activeCall == nil {
 		// Call might have already ended, just clear user status
-		ch.clearUserBusy(c.userId)
+		ch.clearUserBusy(c.userId, payload.ConversationID)
 		return
 	}
 
@@ -363,7 +363,7 @@ func (ch *CallHandler) handleCallCancel(ev event.WsEvent, c *Client) {
 	// Get active call
 	activeCall := ch.getActiveCall(payload.ConversationID)
 	if activeCall == nil {
-		ch.clearUserBusy(c.userId)
+		ch.clearUserBusy(c.userId, payload.ConversationID)
 		return
 	}
 
@@ -379,7 +379,7 @@ func (ch *CallHandler) handleCallCancel(ev event.WsEvent, c *Client) {
 	activeCall.Mu.RLock()
 	for userID := range activeCall.Participants {
 		ch.notifyCallCancelled(payload.ConversationID, userID, c.userId)
-		ch.clearUserBusy(userID)
+		ch.clearUserBusy(userID, payload.ConversationID)
 	}
 	activeCall.Mu.RUnlock()
 
@@ -399,7 +399,7 @@ func (ch *CallHandler) handleCallTimeout(ev event.WsEvent, c *Client) {
 	// Get active call
 	activeCall := ch.getActiveCall(payload.ConversationID)
 	if activeCall == nil {
-		ch.clearUserBusy(c.userId)
+		ch.clearUserBusy(c.userId, payload.ConversationID)
 		return
 	}
 
@@ -409,7 +409,7 @@ func (ch *CallHandler) handleCallTimeout(ev event.WsEvent, c *Client) {
 	participant, exists := activeCall.Participants[c.userId]
 	if !exists {
 		activeCall.Mu.Unlock()
-		ch.clearUserBusy(c.userId)
+		ch.clearUserBusy(c.userId, payload.ConversationID)
 		return
 	}
 
@@ -427,7 +427,7 @@ func (ch *CallHandler) handleCallTimeout(ev event.WsEvent, c *Client) {
 	log.Printf("Call timeout: %s reported by %s", payload.ConversationID, c.userId)
 
 	// Clear this user's busy status
-	ch.clearUserBusy(c.userId)
+	ch.clearUserBusy(c.userId, payload.ConversationID)
 
 	// For 1-to-1 call, notify caller and end call
 	if is1to1Call {
@@ -455,7 +455,7 @@ func (ch *CallHandler) handleCallEnd(ev event.WsEvent, c *Client) {
 	// Get active call
 	activeCall := ch.getActiveCall(payload.ConversationID)
 	if activeCall == nil {
-		ch.clearUserBusy(c.userId)
+		ch.clearUserBusy(c.userId, payload.ConversationID)
 		return
 	}
 
@@ -490,7 +490,7 @@ func (ch *CallHandler) handleCallEnd(ev event.WsEvent, c *Client) {
 	participant, exists := activeCall.Participants[c.userId]
 	if !exists {
 		activeCall.Mu.Unlock()
-		ch.clearUserBusy(c.userId)
+		ch.clearUserBusy(c.userId, payload.ConversationID)
 		return
 	}
 
@@ -514,7 +514,7 @@ func (ch *CallHandler) handleCallEnd(ev event.WsEvent, c *Client) {
 	log.Printf("Participant left call: %s by %s (reason: %s)", payload.ConversationID, c.userId, reason)
 
 	// Clear this user's busy status
-	ch.clearUserBusy(c.userId)
+	ch.clearUserBusy(c.userId, payload.ConversationID)
 
 	// Notify caller that participant left
 	ch.notifyParticipantLeft(payload.ConversationID, activeCall.CallerID, c.userId, reason, duration)

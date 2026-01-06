@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	CallingDuraation = 30 * time.Second
+	CallingDuration = 30 * time.Second
 )
 
 // -----------------------------------------------------------------
@@ -23,7 +23,7 @@ func (ch *CallHandler) registerCall(call *model.ActiveGroupCall) {
 }
 
 func (ch *CallHandler) startCallTimeoutWatcher(activeCall *model.ActiveGroupCall) {
-	time.Sleep(CallingDuraation * time.Second)
+	time.Sleep(CallingDuration)
 
 	call := ch.getActiveCall(activeCall.ConversationID)
 	if call == nil {

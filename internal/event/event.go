@@ -9,6 +9,7 @@ const (
 	EventMarkDelivered = "mark_delivered"
 	EventMarkSeen      = "mark_seen"
 	EventTyping        = "typing"
+	HeartBeat          = "heartbeat" // Client sends this periodically to prove it's alive
 
 	// Server -> Client
 	EventNewMessage  = "new_message"
