@@ -35,6 +35,30 @@ func (ch *CallHandler) GetUserDetail(ids []string) map[string]*model.CallPartici
 	return participants
 }
 
+func (ch *CallHandler) notifyCallee(call *model.ActiveGroupCall, callerID string) {
+	incomingEvent := model.CallIncomingEvent{
+		ConversationID: call.ConversationID,
+		CallerID:       callerID,
+		Participants:   call.Participants,
+		// CallerName and CallerAvatar can be fetched from user service if needed
+		CallType:  call.CallType,
+		Timeout:   call.Timeout,
+		Timestamp: time.Now().Unix(),
+	}
+
+	payload, _ := json.Marshal(incomingEvent)
+	ev := event.WsEvent{
+		Event:   event.EventJoiningRequest,
+		Payload: payload,
+	}
+
+	call.Mu.RLock()
+	for userID := range call.Participants {
+		ch.sendToUser(userID, ev)
+	}
+	call.Mu.RUnlock()
+}
+
 func (ch *CallHandler) notifyCallees(call *model.ActiveGroupCall, callerID string, isJoinRequest bool) {
 	incomingEvent := model.CallIncomingEvent{
 		ConversationID: call.ConversationID,

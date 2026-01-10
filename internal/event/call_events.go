@@ -25,6 +25,9 @@ const (
 
 	// EventCallStarted - Notify that a call has started (used for group calls)
 	EventCallStarted = "call:started"
+
+	// EventJoiningRequest - Notify that a call has requested to join (used for group calls)
+	EventJoiningRequest = "call:raise-joining-request"
 )
 
 // Call Event Types - Server to Client
