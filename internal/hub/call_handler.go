@@ -50,9 +50,91 @@ func (ch *CallHandler) HandleCallEvent(ev event.WsEvent, c *Client) {
 		ch.handleCallEnd(ev, c)
 	case event.EventCallStarted:
 		ch.handleCallInitiate(ev, c, true)
+	case event.EventJoiningRequest:
+		ch.raiseJoinigRequest(ev, c)
 	default:
 		log.Printf("unknown call event type: %s", ev.Event)
 	}
+}
+
+// handleCallInitiate processes a call initiation request
+func (ch *CallHandler) raiseJoinigRequest(ev event.WsEvent, c *Client) {
+	var payload model.CallInitiatePayload
+	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+		log.Printf("failed to unmarshal call initiate payload: %v", err)
+		ch.sendCallError(c, "", "invalid_payload", "Failed to parse call initiate request")
+		return
+	}
+
+	// Validate payload
+	if payload.ConversationID == "" {
+		ch.sendCallError(c, "", "invalid_conversation_id", "ConversationID is required")
+		return
+	}
+
+	if payload.CallType != event.CallTypeAudio && payload.CallType != event.CallTypeVideo {
+		ch.sendCallError(c, payload.ConversationID, "invalid_call_type", "Conversation must be 'audio' or 'video'")
+		return
+	}
+
+	// room := ch.hub.GetRoom(payload.ConversationID)
+	// if room == nil {
+	// 	log.Printf("room %s not found, cannot publish message", payload.ConversationID)
+	// 	return
+	// }
+
+	// // Get list of members
+	// room.mu.RLock()
+	// payload.CalleeIDs = make([]string, 0, len(room.Members))
+	// for memberID := range room.Members {
+	// 	payload.CalleeIDs = append(payload.CalleeIDs, memberID)
+	// }
+	// room.mu.RUnlock()
+
+	// Set default timeout
+	timeout := payload.Timeout
+	if timeout <= 0 {
+		timeout = event.DefaultCallTimeout
+	}
+	if timeout > event.MaxCallTimeout {
+		timeout = event.MaxCallTimeout
+	}
+
+	// Generate LiveKit room name
+	roomName := "room_" + payload.ConversationID
+
+	// Create participants map
+	participants := ch.GetUserDetail(append(payload.CalleeIDs, c.userId))
+
+	// Create active call record
+	activeCall := &model.ActiveGroupCall{
+		ConversationID: payload.ConversationID,
+		CallerID:       c.userId,
+		CallType:       payload.CallType,
+		Status:         event.CallStatusRinging,
+		Timeout:        timeout,
+		CreatedAt:      time.Now(),
+		Participants:   participants,
+		RoomName:       roomName,
+	}
+
+	// Change user status as busy
+	ch.setUserBusy(c.userId, payload.ConversationID)
+
+	// Start server timer go routine to handle participant call status
+	go ch.startCallTimeoutWatcher(activeCall)
+
+	// Mark all callees as having incoming call
+	for _, calleeID := range payload.CalleeIDs {
+		if calleeID != c.userId {
+			ch.setUserHavingCall(calleeID, payload.ConversationID)
+		}
+	}
+
+	log.Printf("Call initiated: %s from %s to %v (type: %s, timeout: %ds)",
+		payload.ConversationID, c.userId, payload.CalleeIDs, payload.CallType, timeout)
+	// Send incoming call notification to all callees
+	ch.notifyCallee(activeCall, c.userId)
 }
 
 // handleCallInitiate processes a call initiation request
@@ -544,7 +626,8 @@ func IsCallEvent(eventType string) bool {
 		event.EventCallTimeout,
 		event.EventCallStarted,
 		event.EventCallDismiss,
-		event.EventCallEnd:
+		event.EventCallEnd,
+		event.EventJoiningRequest:
 		return true
 	default:
 		return false

@@ -1,3 +1,4 @@
+
 {
   "mysql": {
     "dsn": "adminuser:password@tcp(145.223.22.73:30001)/confeet"
@@ -6,7 +7,9 @@
     "uri": "mongodb://adminuser:password@145.223.22.73:30001",
     "database": "confeet",
     "socketRoute": "ws",
+    "uuid_namespace": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
     "messagesCollection": "messages",
+    "usersCollection": "user_cache",
     "sessionsCollection": "sessions",
     "productsCollection": "products"
   },
