@@ -42,6 +42,19 @@ type CallAcceptPayload struct {
 	CallerID       string `json:"callerId"`
 }
 
+// GroupNotificationEventPayload is sent by callee to accept a call
+type GroupNotificationPayload struct {
+	ConversationID   string `json:"conversationId"`
+	NotificationType string `json:"notificationType"` // "accept", "reject", "dismiss", "timeout"
+	CallerID         string `json:"callerId"`
+}
+
+// DirectNotificationEventPayload is sent by callee to accept a call
+type DirectNotificationPayload struct {
+	ConversationID string `json:"conversationId"`
+	CallerID       string `json:"callerId"`
+}
+
 // CallRejectPayload is sent by callee to reject a call
 type CallRejectPayload struct {
 	ConversationID string `json:"conversationId"`

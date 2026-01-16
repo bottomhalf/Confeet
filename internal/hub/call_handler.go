@@ -51,14 +51,60 @@ func (ch *CallHandler) HandleCallEvent(ev event.WsEvent, c *Client) {
 	case event.EventCallStarted:
 		ch.handleCallInitiate(ev, c, true)
 	case event.EventJoiningRequest:
-		ch.raiseJoinigRequest(ev, c)
+		ch.raiseJoiningRequest(ev, c)
+	case event.EventSendGroupNotification:
+		ch.sendGroupNotification(ev, c)
 	default:
 		log.Printf("unknown call event type: %s", ev.Event)
 	}
 }
 
+// sendGroupNotification sends a notification to all room participants except the sender
+func (ch *CallHandler) sendGroupNotification(ev event.WsEvent, c *Client) {
+	var payload model.GroupNotificationPayload
+	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+		log.Printf("failed to unmarshal group notification payload: %v", err)
+		ch.sendCallError(c, "", "invalid_payload", "Failed to parse group notification request")
+		return
+	}
+
+	// Validate payload
+	if payload.ConversationID == "" {
+		ch.sendCallError(c, "", "invalid_conversation_id", "ConversationID is required")
+		return
+	}
+
+	if payload.NotificationType == "" {
+		ch.sendCallError(c, "", "invalid_notification_type", "NotificationType is required")
+		return
+	}
+
+	// Get room
+	room := ch.hub.GetRoom(payload.ConversationID)
+	if room == nil {
+		log.Printf("room %s not found, cannot send group notification", payload.ConversationID)
+		return
+	}
+
+	// Get list of members (excluding the sender)
+	var members []string
+	room.mu.RLock()
+	for memberID := range room.Members {
+		if memberID != c.userId {
+			members = append(members, memberID)
+		}
+	}
+	room.mu.RUnlock()
+
+	log.Printf("Group notification sent: %s to %d members (type: %s)",
+		payload.ConversationID, len(members), payload.NotificationType)
+
+	// Send notification to all other members
+	ch.sendNotification(payload.ConversationID, payload.NotificationType, members)
+}
+
 // handleCallInitiate processes a call initiation request
-func (ch *CallHandler) raiseJoinigRequest(ev event.WsEvent, c *Client) {
+func (ch *CallHandler) raiseJoiningRequest(ev event.WsEvent, c *Client) {
 	var payload model.CallInitiatePayload
 	if err := json.Unmarshal(ev.Payload, &payload); err != nil {
 		log.Printf("failed to unmarshal call initiate payload: %v", err)
