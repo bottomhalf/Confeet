@@ -90,9 +90,7 @@ func (ch *CallHandler) sendGroupNotification(ev event.WsEvent, c *Client) {
 	var members []string
 	room.mu.RLock()
 	for memberID := range room.Members {
-		if memberID != c.userId {
-			members = append(members, memberID)
-		}
+		members = append(members, memberID)
 	}
 	room.mu.RUnlock()
 
@@ -673,6 +671,7 @@ func IsCallEvent(eventType string) bool {
 		event.EventCallStarted,
 		event.EventCallDismiss,
 		event.EventCallEnd,
+		event.EventSendGroupNotification,
 		event.EventJoiningRequest:
 		return true
 	default:

@@ -52,8 +52,8 @@ type ConversationSettings struct {
 }
 
 var (
-	GN_GROUP_CREATED      = "group_created"
-	GN_GROUP_DELETED      = "group_deleted"
-	GN_GROUP_RENAMED      = "group_renamed"
-	GN_GROUP_MEMBER_ADDED = "group_member_added"
+	GN_GROUP_CREATED      = "group:created"
+	GN_GROUP_DELETED      = "group:deleted"
+	GN_GROUP_RENAMED      = "group:renamed"
+	GN_GROUP_MEMBER_ADDED = "group:member_added"
 )

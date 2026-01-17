@@ -30,7 +30,7 @@ const (
 	EventJoiningRequest = "call:raise-joining-request"
 
 	// EventSendGroupNotification - Notify that the group member event
-	EventSendGroupNotification = "call:send-group-notification"
+	EventSendGroupNotification = "call:group-notification"
 )
 
 // Call Event Types - Server to Client
@@ -75,7 +75,7 @@ const (
 	EventCallParticipantLeft = "call:participant_left"
 
 	// EventGroupNotification - Send notification to group members
-	EventGroupNotification = "call:group_notification"
+	EventGroupNotification = "call:group-notification"
 )
 
 // Call Types
