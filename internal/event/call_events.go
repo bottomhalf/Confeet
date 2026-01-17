@@ -28,6 +28,9 @@ const (
 
 	// EventJoiningRequest - Notify that a call has requested to join (used for group calls)
 	EventJoiningRequest = "call:raise-joining-request"
+
+	// EventSendGroupNotification - Notify that the group member event
+	EventSendGroupNotification = "call:group-notification"
 )
 
 // Call Event Types - Server to Client
@@ -70,6 +73,9 @@ const (
 
 	// EventCallParticipantLeft - Notify that a participant left the group call
 	EventCallParticipantLeft = "call:participant_left"
+
+	// EventGroupNotification - Send notification to group members
+	EventGroupNotification = "call:group-notification"
 )
 
 // Call Types

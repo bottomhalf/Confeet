@@ -50,3 +50,10 @@ type ConversationSettings struct {
 	AllowPinning   bool `json:"allowPinning" bson:"allow_pinning"`
 	AdminOnlyPost  bool `json:"adminOnlyPost" bson:"admin_only_post"`
 }
+
+var (
+	GN_GROUP_CREATED      = "group:created"
+	GN_GROUP_DELETED      = "group:deleted"
+	GN_GROUP_RENAMED      = "group:renamed"
+	GN_GROUP_MEMBER_ADDED = "group:member_added"
+)

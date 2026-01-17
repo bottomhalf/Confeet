@@ -35,6 +35,23 @@ func (ch *CallHandler) GetUserDetail(ids []string) map[string]*model.CallPartici
 	return participants
 }
 
+func (ch *CallHandler) sendNotification(conversationID, notificationType string, members []string) {
+	groupNotification := model.GroupNotificationPayload{
+		ConversationID:   conversationID,
+		NotificationType: notificationType,
+	}
+
+	payload, _ := json.Marshal(groupNotification)
+	ev := event.WsEvent{
+		Event:   event.EventGroupNotification,
+		Payload: payload,
+	}
+
+	for _, userID := range members {
+		ch.sendToUser(userID, ev)
+	}
+}
+
 func (ch *CallHandler) notifyCallee(call *model.ActiveGroupCall, callerID string) {
 	incomingEvent := model.CallIncomingEvent{
 		ConversationID: call.ConversationID,
